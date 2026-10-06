@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-bg: #F7F8FC;
+    --color-surface: #FFFFFF;
+    --color-surface-elevated: #FFFFFF;
+    --color-text: #10131A;
+    --color-muted: #5E6679;
+    --color-border: #E9ECF4;
+    --color-primary: #5B5CEB;
+    --color-secondary: #7C5CFF;
+    --color-accent: #27C7D9;
+    --color-success: #10B981;
+    --color-warning: #F59E0B;
+    --color-error: #EF4444;
+
+    /* Legacy compatibility mappings */
+    --bg-surface: #FFFFFF;
+    --bg-surface-elevated: #FFFFFF;
+    --bg-page: #F7F8FC;
+    --text-ink: #10131A;
+    --text-muted: #5E6679;
+    --border-subtle: #E9ECF4;
+    --border-strong: #D5DAE7;
+    --brand: #5B5CEB;
+  }
+
+  .dark {
+    --color-bg: #090B10;
+    --color-surface: #11141B;
+    --color-surface-elevated: #181C25;
+    --color-text: #F6F8FB;
+    --color-muted: #8B94A7;
+    --color-border: #232836;
+    --color-primary: #5B5CEB;
+    --color-secondary: #7C5CFF;
+    --color-accent: #27C7D9;
+    --color-success: #10B981;
+    --color-warning: #F59E0B;
+    --color-error: #EF4444;
+
+    /* Legacy compatibility mappings */
+    --bg-surface: #11141B;
+    --bg-surface-elevated: #181C25;
+    --bg-page: #090B10;
+    --text-ink: #F6F8FB;
+    --text-muted: #8B94A7;
+    --border-subtle: #232836;
+    --border-strong: #355985;
+    --brand: #5B5CEB;
+  }
+
+  body {
+    @apply bg-nuvio-bg dark:bg-nuvio-darkBg text-nuvio-ink dark:text-ink-50 antialiased font-sans selection:bg-brand-500 selection:text-white;
+    min-height: 100vh;
+  }
+}
+
+/* Accessible focus styling */
+:focus-visible {
+  @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-nuvio-bg dark:ring-offset-nuvio-darkBg;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Clean scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400 dark:bg-slate-600;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}

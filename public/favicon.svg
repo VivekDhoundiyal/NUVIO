@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 40 40" fill="none">
+  <defs>
+    <linearGradient id="nuvio-grad-primary" x1="4" y1="4" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5B5CEB" />
+      <stop offset="100%" stop-color="#7C5CFF" />
+    </linearGradient>
+    <linearGradient id="nuvio-grad-accent" x1="16" y1="4" x2="36" y2="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#27C7D9" />
+      <stop offset="100%" stop-color="#5B5CEB" />
+    </linearGradient>
+    <linearGradient id="nuvio-grad-fold" x1="12" y1="18" x2="28" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3C3AC4" />
+      <stop offset="100%" stop-color="#2C2B81" />
+    </linearGradient>
+  </defs>
+  <rect x="6" y="5" width="23" height="30" rx="5" fill="url(#nuvio-grad-primary)" />
+  <path d="M15 5L29 20V35L15 20V5Z" fill="url(#nuvio-grad-fold)" opacity="0.85" />
+  <path d="M13 10L33 22C34.5 22.8 34.5 25.2 33 26L21 34C19.5 35 17 34 17 32.2V11.8C17 10.2 11.5 9.1 13 10Z" fill="url(#nuvio-grad-accent)" />
+  <path d="M23 5L29 11H25C23.8954 11 23 10.1046 23 9V5Z" fill="#FFFFFF" opacity="0.75" />
+  <circle cx="13" cy="28" r="2.2" fill="#FFFFFF" opacity="0.9" />
+</svg>

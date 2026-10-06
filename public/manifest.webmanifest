@@ -1,0 +1,16 @@
+{
+  "name": "NUVIO",
+  "short_name": "NUVIO",
+  "description": "Your documents. Done in seconds. Local-first browser-native document workstation.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090B10",
+  "theme_color": "#5B5CEB",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

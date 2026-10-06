@@ -281,7 +281,7 @@ export class PdfSelfDiagnosticEngine {
       }
 
       // Verify loadability by pdfjsLib
-      const pdfJsDoc = await pdfjsLib.getDocument({ data: exportedBytes }).promise;
+      const pdfJsDoc = await pdfjsLib.getDocument({ data: exportedBytes, password: '' }).promise;
       for (let i = 1; i <= pdfJsDoc.numPages; i++) {
         const page = await pdfJsDoc.getPage(i);
         const textContent = await page.getTextContent();

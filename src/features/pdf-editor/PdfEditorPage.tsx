@@ -5,7 +5,8 @@ import { ArrowLeft, RefreshCw, FileText, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import type { PageInfo, AnnotationObject, ValidationReport, EditableTextSpan } from '../../types/document';
-import { PdfEngine } from '../../engines/pdf/pdfEngine';
+import { PdfEngine, isPasswordException, formatPdfErrorMessage } from '../../engines/pdf/pdfEngine';
+import { PdfProtectionEngine } from '../../engines/pdf/pdfProtectionEngine';
 import { AnnotationBurner } from '../../engines/annotation/annotationBurner';
 import { ValidationEngine } from '../../engines/validation/validationEngine';
 import { TextObjectModel } from '../../engines/pdf/textObjectModel';
@@ -28,6 +29,7 @@ import { SignatureModal } from './SignatureModal';
 import { StampModal } from './StampModal';
 import { WatermarkModal } from './WatermarkModal';
 import type { WatermarkOptions } from './WatermarkModal';
+import { PasswordModal } from './PasswordModal';
 import { toggleListFormatting } from '../../utils/pdfSanitize';
 
 interface HistoryState {
@@ -75,6 +77,10 @@ export const PdfEditorPage: React.FC = () => {
   const [isStampModalOpen, setIsStampModalOpen] = useState(false);
   const [isWatermarkModalOpen, setIsWatermarkModalOpen] = useState(false);
   const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState<{ file: File; bytes: Uint8Array } | null>(null);
+  const [isUnlocking, setIsUnlocking] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   // Export & Validation
   const [isExporting, setIsExporting] = useState(false);
@@ -135,19 +141,17 @@ export const PdfEditorPage: React.FC = () => {
     [historyIndex, triggerAutosave]
   );
 
-  // Load PDF file
-  const handleFileSelected = useCallback(async (files: File[]) => {
-    const file = files[0];
-    if (!file) return;
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const uint8 = new Uint8Array(buffer);
+  // Initialize editor with parsed document
+  const initializeEditorWithDocument = useCallback(
+    async (
+      uint8: Uint8Array,
+      name: string,
+      size: number,
+      info: { pages: PageInfo[] },
+      docProxy: pdfjsLib.PDFDocumentProxy
+    ) => {
       setPdfBytes(uint8);
-      setFileName(file.name);
-
-      const info = await PdfEngine.getPdfInfo(uint8, file.name);
-      const docProxy = await PdfEngine.loadPdfJsDoc(uint8);
+      setFileName(name);
 
       // Generate thumbnails for pages
       const pagesWithThumbnails: PageInfo[] = [];
@@ -169,6 +173,7 @@ export const PdfEditorPage: React.FC = () => {
       setActivePageIndex(0);
       setAnnotations([]);
       setSelectedObjectId(null);
+      setSelectedSpanId(null);
       setEditableSpansByPage(spansByPage);
       setScannedPages(scannedMap);
 
@@ -184,16 +189,91 @@ export const PdfEditorPage: React.FC = () => {
 
       await StorageService.logToolUsage('pdf-editor');
       await StorageService.logRecentFile({
-        fileName: file.name,
-        fileSizeBytes: file.size,
+        fileName: name,
+        fileSizeBytes: size,
         pageCount: info.pages.length,
       });
 
-      toast.success('Document loaded', `${file.name} (${info.pages.length} pages ready for editing)`);
-    } catch (e: any) {
-      toast.error('Failed to load PDF', e.message || 'Please check that the file is not encrypted or corrupted.');
+      toast.success('Document loaded', `${name} (${info.pages.length} pages ready for editing)`);
+    },
+    [toast]
+  );
+
+  // Load PDF file
+  const handleFileSelected = useCallback(
+    async (files: File[]) => {
+      const file = files[0];
+      if (!file) return;
+
+      try {
+        const buffer = await file.arrayBuffer();
+        const uint8 = new Uint8Array(buffer);
+
+        let info;
+        let docProxy;
+        try {
+          info = await PdfEngine.getPdfInfo(uint8, file.name);
+          docProxy = await PdfEngine.loadPdfJsDoc(uint8);
+        } catch (err: any) {
+          if (isPasswordException(err)) {
+            setPendingFile({ file, bytes: uint8 });
+            setPasswordError(null);
+            setIsPasswordModalOpen(true);
+            return;
+          }
+          throw err;
+        }
+
+        await initializeEditorWithDocument(uint8, file.name, file.size, info, docProxy);
+      } catch (e: any) {
+        toast.error('Failed to load PDF', formatPdfErrorMessage(e));
+      }
+    },
+    [initializeEditorWithDocument, toast]
+  );
+
+  // Decrypt and load password-protected document
+  const handleUnlockPdf = async (password: string) => {
+    if (!pendingFile) return;
+    setIsUnlocking(true);
+    setPasswordError(null);
+    try {
+      let unlockedBytes: Uint8Array;
+      try {
+        unlockedBytes = await PdfProtectionEngine.unlockPdf(pendingFile.bytes, password);
+      } catch {
+        // Fallback: validate password via loadPdfJsDoc
+        await PdfEngine.loadPdfJsDoc(pendingFile.bytes, password);
+        unlockedBytes = pendingFile.bytes;
+      }
+
+      const info = await PdfEngine.getPdfInfo(unlockedBytes, pendingFile.file.name, password);
+      const docProxy = await PdfEngine.loadPdfJsDoc(unlockedBytes, password);
+
+      setIsPasswordModalOpen(false);
+      await initializeEditorWithDocument(
+        unlockedBytes,
+        pendingFile.file.name,
+        pendingFile.file.size,
+        info,
+        docProxy
+      );
+      setPendingFile(null);
+    } catch (err: any) {
+      const msg = err.message || 'Incorrect password. Please verify and try again.';
+      setPasswordError(msg);
+      throw new Error(msg);
+    } finally {
+      setIsUnlocking(false);
     }
-  }, [toast]);
+  };
+
+  const handleClosePasswordModal = () => {
+    setIsPasswordModalOpen(false);
+    setPendingFile(null);
+    setPasswordError(null);
+    FileSessionStore.clear();
+  };
 
   const hasLoadedSessionRef = useRef(false);
 
@@ -1265,6 +1345,15 @@ export const PdfEditorPage: React.FC = () => {
           setIsValidationModalOpen(false);
           handleExport();
         }}
+      />
+
+      <PasswordModal
+        isOpen={isPasswordModalOpen}
+        fileName={pendingFile?.file.name || 'Protected Document'}
+        onClose={handleClosePasswordModal}
+        onUnlock={handleUnlockPdf}
+        isUnlocking={isUnlocking}
+        errorMessage={passwordError}
       />
     </div>
   );

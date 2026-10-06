@@ -244,7 +244,7 @@ export class PdfToWordEngine {
     onProgress?: (progressPercent: number, message: string) => void
   ): Promise<Uint8Array> {
     onProgress?.(8, 'Parsing document structure...');
-    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0), password: '' });
     const pdfDoc = await loadingTask.promise;
     const numPages = pdfDoc.numPages;
 

@@ -58,7 +58,10 @@ export class PdfProtectionEngine {
    */
   static async isPdfEncrypted(pdfBytes: Uint8Array): Promise<boolean> {
     try {
-      const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+      const loadingTask = pdfjsLib.getDocument({
+        data: pdfBytes.slice(0),
+        password: '',
+      });
       await loadingTask.promise;
       return false;
     } catch (err: any) {

@@ -68,7 +68,7 @@ export class ValidationEngine {
 
     if (pdfLibDoc) {
       try {
-        const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+        const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0), password: '' });
         pdfJsDoc = await loadingTask.promise;
         actualPageCount = pdfJsDoc.numPages;
 

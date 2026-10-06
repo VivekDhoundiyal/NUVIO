@@ -17,9 +17,13 @@ const activeCanvasRenderTasks = new WeakMap<HTMLCanvasElement, { cancel: () => v
 export class PdfEngine {
   /**
    * Loads a PDF Document Proxy using pdfjsLib for rendering and inspection.
+   * Defaults password to '' to allow opening unencrypted or owner-only restricted PDFs without throwing 'No password given'.
    */
-  static async loadPdfJsDoc(pdfBytes: Uint8Array): Promise<pdfjsLib.PDFDocumentProxy> {
-    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+  static async loadPdfJsDoc(pdfBytes: Uint8Array, password?: string): Promise<pdfjsLib.PDFDocumentProxy> {
+    const loadingTask = pdfjsLib.getDocument({
+      data: pdfBytes.slice(0),
+      password: password !== undefined ? password : '',
+    });
     return await loadingTask.promise;
   }
 
@@ -28,14 +32,15 @@ export class PdfEngine {
    */
   static async getPdfInfo(
     pdfBytes: Uint8Array,
-    fileName: string = 'document.pdf'
+    fileName: string = 'document.pdf',
+    password?: string
   ): Promise<{
     pageCount: number;
     totalPages: number;
     metadata: DocumentMetadata;
     pages: PageInfo[];
   }> {
-    const pdfDoc = await this.loadPdfJsDoc(pdfBytes);
+    const pdfDoc = await this.loadPdfJsDoc(pdfBytes, password);
     const pageCount = pdfDoc.numPages;
 
     let title: string | undefined;
@@ -945,4 +950,43 @@ export class PdfEngine {
 
     return await pdfDoc.save();
   }
+  
+  /**
+   * Helper to check if an error is a password exception.
+   */
+  static isPasswordException(err: any): boolean {
+    return isPasswordException(err);
+  }
 }
+
+/**
+ * Helper to detect if an error thrown during PDF loading is due to password protection.
+ */
+export function isPasswordException(err: any): boolean {
+  if (!err) return false;
+  if (err.name === 'PasswordException') return true;
+  if (err.code === 1 || err.code === 2) return true;
+  const msg = (err.message || '').toLowerCase();
+  return (
+    msg.includes('password') ||
+    msg.includes('need_password') ||
+    msg.includes('incorrect_password') ||
+    msg.includes('no password given')
+  );
+}
+
+/**
+ * Format PDF loading error messages cleanly for end users.
+ */
+export function formatPdfErrorMessage(err: any): string {
+  if (!err) return 'An unknown error occurred while loading the PDF.';
+  if (isPasswordException(err)) {
+    return 'This PDF is password-protected. Please enter the password to open it.';
+  }
+  const msg = err.message || String(err);
+  if (msg.includes('Invalid PDF structure') || msg.includes('PDFHeaderNotFoundException')) {
+    return 'The file does not appear to be a valid or supported PDF document.';
+  }
+  return msg;
+}
+

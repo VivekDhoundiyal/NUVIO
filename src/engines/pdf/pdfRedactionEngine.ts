@@ -62,7 +62,7 @@ export class PdfRedactionEngine {
 
     // Load PDF.js to count and audit intersecting text items
     try {
-      const pdfJsDoc = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+      const pdfJsDoc = await pdfjsLib.getDocument({ data: pdfBytes.slice(0), password: '' }).promise;
       for (const [pageIdxStr, areas] of Object.entries(redactionsByPage)) {
         const pageIdx = parseInt(pageIdxStr, 10);
         if (pageIdx < 0 || pageIdx >= pdfJsDoc.numPages) continue;

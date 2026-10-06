@@ -35,7 +35,7 @@ export class CompressionEngine {
       else level = 'medium';
     }
 
-    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0), password: '' });
     const srcPdfJs = await loadingTask.promise;
     const numPages = srcPdfJs.numPages;
 

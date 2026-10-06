@@ -71,7 +71,7 @@ export class OcrEngine {
     onProgress?: (progressPercent: number, statusText: string) => void
   ): Promise<{ fullText: string; pageTexts: string[] }> {
     onProgress?.(5, 'Loading PDF for OCR...');
-    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0), password: '' });
     const pdfDoc = await loadingTask.promise;
     const numPages = pdfDoc.numPages;
 

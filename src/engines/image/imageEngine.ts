@@ -22,7 +22,7 @@ export class ImageEngine {
     const quality = options.quality !== undefined ? options.quality : 0.92;
 
     onProgress?.(5, 'Loading PDF for image extraction...');
-    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0), password: '' });
     const pdfDoc = await loadingTask.promise;
     const totalPages = pdfDoc.numPages;
 

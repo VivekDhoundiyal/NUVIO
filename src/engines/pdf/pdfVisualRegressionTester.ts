@@ -179,8 +179,8 @@ export class PdfVisualRegressionTester {
     }
 
     // 3. Pixel level comparison via PDF.js text extraction consistency
-    const origPdfJs = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
-    const editedPdfJs = await pdfjsLib.getDocument({ data: editedPdfBytes }).promise;
+    const origPdfJs = await pdfjsLib.getDocument({ data: originalPdfBytes, password: '' }).promise;
+    const editedPdfJs = await pdfjsLib.getDocument({ data: editedPdfBytes, password: '' }).promise;
 
     const origPageText = (await (await origPdfJs.getPage(targetPage + 1)).getTextContent()).items
       .map((i: any) => i.str)

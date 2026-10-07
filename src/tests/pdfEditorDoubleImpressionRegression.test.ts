@@ -182,4 +182,41 @@ describe('PDF Editor Double-Impression & Ghosting Elimination Regression Tests',
     // Surrounding lines remain intact
     expect(fullText).toContain('Consectetur adipiscing');
   });
+
+  it('6. Incremental In-Memory Re-render Lifecycle: edits word, re-renders in-memory PDF, edits again cleanly', async () => {
+    const baseBytes = await createLoremIpsumPdf();
+    const doc0 = await PdfEngine.loadPdfJsDoc(baseBytes);
+    const { textSpans: spans0 } = await PdfEngine.extractPageTextSpans(doc0, 1);
+
+    const span0 = spans0.find((s) => s.originalText.includes('sit'))!;
+    const wordSit = span0.words!.find((w) => w.text === 'sit')!;
+
+    // Step 1: User edits "sit" -> "vivek" and commits
+    const edit1 = TextObjectModel.updateWordInSpan(span0, wordSit.id, 'vivek');
+    const bytes1 = await AnnotationBurner.burnAllEditsAndAnnotations(baseBytes, [], { 0: [edit1] });
+
+    // In-memory document updates, PDF.js loads bytes1 and re-extracts spans
+    const doc1 = await PdfEngine.loadPdfJsDoc(bytes1);
+    const { textSpans: spans1 } = await PdfEngine.extractPageTextSpans(doc1, 1);
+
+    const span1 = spans1.find((s) => s.currentText.includes('vivek'))!;
+    expect(span1).toBeDefined();
+    const wordVivek = span1.words!.find((w) => w.text === 'vivek')!;
+    expect(wordVivek).toBeDefined();
+
+    // Step 2: User edits "dolor" -> "magna" on the same line and commits
+    const wordDolor = span1.words!.find((w) => w.text === 'dolor')!;
+    expect(wordDolor).toBeDefined();
+
+    const edit2 = TextObjectModel.updateWordInSpan(span1, wordDolor.id, 'magna');
+    const bytes2 = await AnnotationBurner.burnAllEditsAndAnnotations(bytes1, [], { 0: [edit2] });
+
+    const doc2 = await PdfEngine.loadPdfJsDoc(bytes2);
+    const { textSpans: spans2 } = await PdfEngine.extractPageTextSpans(doc2, 1);
+    const fullText2 = spans2.map((s) => s.currentText).join(' ');
+
+    expect(fullText2).toContain('Lorem ipsum magna vivek amet');
+    expect(fullText2).not.toContain('sit');
+    expect(fullText2).not.toContain('dolor');
+  });
 });

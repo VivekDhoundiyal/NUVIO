@@ -33,6 +33,7 @@ import { PasswordModal } from './PasswordModal';
 import { toggleListFormatting } from '../../utils/pdfSanitize';
 
 interface HistoryState {
+  pdfBytes: Uint8Array;
   annotations: AnnotationObject[];
   editableSpansByPage: Record<number, EditableTextSpan[]>;
   pages: PageInfo[];
@@ -127,9 +128,13 @@ export const PdfEditorPage: React.FC = () => {
     (
       newAnnotations: AnnotationObject[],
       newSpansByPage: Record<number, EditableTextSpan[]>,
-      newPages: PageInfo[]
+      newPages: PageInfo[],
+      currentPdfBytes?: Uint8Array
     ) => {
+      const bytesToStore = currentPdfBytes || pdfBytes;
+      if (!bytesToStore) return;
       const newState: HistoryState = {
+        pdfBytes: bytesToStore,
         annotations: JSON.parse(JSON.stringify(newAnnotations)),
         editableSpansByPage: JSON.parse(JSON.stringify(newSpansByPage)),
         pages: JSON.parse(JSON.stringify(newPages)),
@@ -138,7 +143,7 @@ export const PdfEditorPage: React.FC = () => {
       setHistoryIndex((prev) => prev + 1);
       triggerAutosave(newAnnotations, newSpansByPage, newPages);
     },
-    [historyIndex, triggerAutosave]
+    [historyIndex, pdfBytes, triggerAutosave]
   );
 
   // Initialize editor with parsed document
@@ -180,6 +185,7 @@ export const PdfEditorPage: React.FC = () => {
       // Initialize history
       setHistory([
         {
+          pdfBytes: uint8,
           annotations: [],
           editableSpansByPage: spansByPage,
           pages: pagesWithThumbnails,
@@ -395,23 +401,63 @@ export const PdfEditorPage: React.FC = () => {
 
   const debounceHistoryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Text Spans update - immediately syncs document model while debouncing undo/redo snapshots
-  const handleUpdateTextSpan = (updatedSpan: EditableTextSpan) => {
-    const currentList = editableSpansByPage[updatedSpan.pageIndex] || [];
-    const nextList = currentList.map((s) => (s.id === updatedSpan.id ? updatedSpan : s));
-    const nextSpansByPage = {
-      ...editableSpansByPage,
-      [updatedSpan.pageIndex]: nextList,
-    };
-    setEditableSpansByPage(nextSpansByPage);
-    triggerAutosave(annotations, nextSpansByPage, pages);
+  // Canonical text edit commit: updates PDF in-memory, re-renders via PDF.js, and synchronizes word hit bounds
+  const handleCommitTextEdit = useCallback(
+    async (updatedSpan: EditableTextSpan) => {
+      if (!pdfBytes) return;
 
-    if (debounceHistoryTimerRef.current) {
-      clearTimeout(debounceHistoryTimerRef.current);
-    }
-    debounceHistoryTimerRef.current = setTimeout(() => {
-      recordHistory(annotations, nextSpansByPage, pages);
-    }, 400);
+      const pageIndex = updatedSpan.pageIndex;
+      const currentList = editableSpansByPage[pageIndex] || [];
+      const nextList = currentList.map((s) => (s.id === updatedSpan.id ? updatedSpan : s));
+      const nextSpansByPage = {
+        ...editableSpansByPage,
+        [pageIndex]: nextList,
+      };
+
+      try {
+        // 1. Burn edit directly into PDF in-memory (content stream replacement / surgical replacement)
+        const updatedPdfBytes = await AnnotationBurner.burnAllEditsAndAnnotations(
+          pdfBytes,
+          annotations,
+          { [pageIndex]: [updatedSpan] }
+        );
+
+        // 2. Reload PDF.js document proxy with the updated PDF binary
+        const updatedDocProxy = await PdfEngine.loadPdfJsDoc(updatedPdfBytes);
+
+        // 3. Re-extract text spans for the edited page to synchronize word hit bounds
+        const { textSpans: newPageSpans } = await PdfEngine.extractPageTextSpans(
+          updatedDocProxy,
+          pageIndex + 1
+        );
+
+        const synchronizedSpansByPage = {
+          ...nextSpansByPage,
+          [pageIndex]: newPageSpans,
+        };
+
+        // 4. Update thumbnail for the edited page
+        const newThumbnail = await PdfEngine.generateThumbnail(updatedDocProxy, pageIndex + 1, 140);
+        const nextPages = pages.map((p) =>
+          p.pageIndex === pageIndex ? { ...p, thumbnailUrl: newThumbnail } : p
+        );
+
+        setPdfBytes(updatedPdfBytes);
+        setPdfJsDoc(updatedDocProxy);
+        setPages(nextPages);
+        setEditableSpansByPage(synchronizedSpansByPage);
+
+        recordHistory(annotations, synchronizedSpansByPage, nextPages, updatedPdfBytes);
+      } catch (err) {
+        console.error('Error committing text edit to in-memory PDF:', err);
+        setEditableSpansByPage(nextSpansByPage);
+      }
+    },
+    [pdfBytes, annotations, editableSpansByPage, pages, recordHistory]
+  );
+
+  const handleUpdateTextSpan = (updatedSpan: EditableTextSpan) => {
+    handleCommitTextEdit(updatedSpan);
   };
 
   // OCR on a scanned page
@@ -532,26 +578,44 @@ export const PdfEditorPage: React.FC = () => {
     recordHistory(updated, editableSpansByPage, pages);
   };
 
-  // Undo / Redo
-  const handleUndo = () => {
+  // Undo / Redo - restores binary PDF and re-renders PDF.js canvas
+  const handleUndo = async () => {
     if (historyIndex > 0) {
       const nextIndex = historyIndex - 1;
+      const targetState = history[nextIndex];
       setHistoryIndex(nextIndex);
-      setAnnotations(history[nextIndex].annotations);
-      setEditableSpansByPage(history[nextIndex].editableSpansByPage);
-      setPages(history[nextIndex].pages);
+      setAnnotations(targetState.annotations);
+      setEditableSpansByPage(targetState.editableSpansByPage);
+      setPages(targetState.pages);
+      setPdfBytes(targetState.pdfBytes);
+      try {
+        const restoredDoc = await PdfEngine.loadPdfJsDoc(targetState.pdfBytes);
+        setPdfJsDoc(restoredDoc);
+      } catch (err) {
+        console.error('Failed to reload restored PDF on undo:', err);
+      }
       setSelectedObjectId(null);
+      setSelectedSpanId(null);
     }
   };
 
-  const handleRedo = () => {
+  const handleRedo = async () => {
     if (historyIndex < history.length - 1) {
       const nextIndex = historyIndex + 1;
+      const targetState = history[nextIndex];
       setHistoryIndex(nextIndex);
-      setAnnotations(history[nextIndex].annotations);
-      setEditableSpansByPage(history[nextIndex].editableSpansByPage);
-      setPages(history[nextIndex].pages);
+      setAnnotations(targetState.annotations);
+      setEditableSpansByPage(targetState.editableSpansByPage);
+      setPages(targetState.pages);
+      setPdfBytes(targetState.pdfBytes);
+      try {
+        const restoredDoc = await PdfEngine.loadPdfJsDoc(targetState.pdfBytes);
+        setPdfJsDoc(restoredDoc);
+      } catch (err) {
+        console.error('Failed to reload restored PDF on redo:', err);
+      }
       setSelectedObjectId(null);
+      setSelectedSpanId(null);
     }
   };
 
@@ -632,19 +696,14 @@ export const PdfEditorPage: React.FC = () => {
             currentText: '',
             isModified: true,
           };
-          const nextSpansByPage = {
-            ...editableSpansByPage,
-            [pIdx]: spanList.map((s) => (s.id === spanId ? updatedSpan : s)),
-          };
-          setEditableSpansByPage(nextSpansByPage);
           setSelectedSpanId(null);
-          recordHistory(annotations, nextSpansByPage, pages);
-          toast.info('Text deleted', 'Original text masked and removed.');
+          handleCommitTextEdit(updatedSpan);
+          toast.info('Text deleted', 'Original text removed from document.');
           break;
         }
       }
     },
-    [editableSpansByPage, annotations, pages, recordHistory, toast]
+    [editableSpansByPage, handleCommitTextEdit, toast]
   );
 
   const handleDeleteSelected = useCallback(() => {
@@ -1321,6 +1380,7 @@ export const PdfEditorPage: React.FC = () => {
               onBringForward={handleBringForward}
               onSendBackward={handleSendBackward}
               onUpdateTextSpan={handleUpdateTextSpan}
+              onCommitTextEdit={handleCommitTextEdit}
               onRunOcrOnPage={handleRunOcrOnPage}
             />
 

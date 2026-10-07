@@ -30,6 +30,7 @@ export interface PropertyPanelProps {
   onUpdateObject: (updated: Partial<AnnotationObject>) => void;
   onUpdateSpan?: (updated: Partial<EditableTextSpan>) => void;
   onDeleteObject: () => void;
+  onDeleteSpan?: () => void;
   onDuplicateObject: () => void;
   onResetSpan?: () => void;
   onBringForward?: () => void;
@@ -42,6 +43,7 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
   onUpdateObject,
   onUpdateSpan,
   onDeleteObject,
+  onDeleteSpan,
   onDuplicateObject,
   onResetSpan,
   onBringForward,
@@ -68,17 +70,30 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
               </span>
             )}
           </div>
-          {onResetSpan && selectedSpan.isModified && (
-            <button
-              type="button"
-              onClick={onResetSpan}
-              title="Revert to original PDF text and style"
-              className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Reset
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onResetSpan && selectedSpan.isModified && (
+              <button
+                type="button"
+                onClick={onResetSpan}
+                title="Revert to original PDF text and style"
+                className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reset
+              </button>
+            )}
+            {onDeleteSpan && !selectedSpan.isDeleted && (
+              <button
+                type="button"
+                onClick={onDeleteSpan}
+                title="Delete text from PDF"
+                className="flex items-center gap-1 text-[11px] text-red-600 dark:text-red-400 hover:underline"
+              >
+                <Trash2 className="w-3 h-3" />
+                Delete
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Text Content */}

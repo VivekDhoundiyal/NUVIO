@@ -38,34 +38,199 @@ export class AnnotationBurner {
 
     const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
 
-    // 1. First apply true content-stream text replacements if any
-    if (editedSpansByPage && Object.keys(editedSpansByPage).length > 0) {
-      await PdfContentStreamEngine.applyTextReplacements(pdfDoc, editedSpansByPage);
+    // Embed standard fonts for guaranteed typographic reproduction
+    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const helveticaOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+    const helveticaBoldOblique = await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
+    const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    const timesRomanBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+    const timesRomanItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+    const timesRomanBoldItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
+    const courier = await pdfDoc.embedFont(StandardFonts.Courier);
+    const courierBold = await pdfDoc.embedFont(StandardFonts.CourierBold);
+    const courierOblique = await pdfDoc.embedFont(StandardFonts.CourierOblique);
+    const courierBoldOblique = await pdfDoc.embedFont(StandardFonts.CourierBoldOblique);
 
-      // 2. Draw any OCR-generated text spans directly onto the page
-      const docPages = pdfDoc.getPages();
-      for (const pIdxStr in editedSpansByPage) {
+    const resolveFont = (family?: string, weight?: string, style?: string) => {
+      const f = (family || '').toLowerCase();
+      const isBold = weight === 'bold';
+      const isItalic = style === 'italic';
+
+      if (f.includes('times') || f.includes('serif') || f.includes('roman')) {
+        if (isBold && isItalic) return timesRomanBoldItalic;
+        if (isBold) return timesRomanBold;
+        if (isItalic) return timesRomanItalic;
+        return timesRoman;
+      }
+      if (f.includes('courier') || f.includes('mono') || f.includes('consolas')) {
+        if (isBold && isItalic) return courierBoldOblique;
+        if (isBold) return courierBold;
+        if (isItalic) return courierOblique;
+        return courier;
+      }
+      if (isBold && isItalic) return helveticaBoldOblique;
+      if (isBold) return helveticaBold;
+      if (isItalic) return helveticaOblique;
+      return helvetica;
+    };
+
+    // 1. First apply true content-stream text replacements where exact matching runs exist
+    let patchedSpanIds = new Set<string>();
+    if (editedSpansByPage && Object.keys(editedSpansByPage).length > 0) {
+      try {
+        patchedSpanIds = await PdfContentStreamEngine.applyTextReplacements(pdfDoc, editedSpansByPage);
+      } catch (err) {
+        console.warn('In-stream text replacement encountered an issue, deferring to surgical replacement:', err);
+      }
+    }
+
+    // 2. Surgical Text Replacement Strategy:
+    // For every modified or deleted text span not patched directly into the PostScript stream,
+    // cover the original text bounds and draw the replacement text with 100% styling fidelity.
+    const docPages = pdfDoc.getPages();
+    if (editedSpansByPage) {
+      for (const [pIdxStr, spans] of Object.entries(editedSpansByPage)) {
         const pIdx = Number(pIdxStr);
-        const spans = editedSpansByPage[pIdx] || [];
+        if (isNaN(pIdx) || pIdx < 0 || pIdx >= docPages.length) continue;
         const page = docPages[pIdx];
         if (!page) continue;
         const { height: pageHeight } = page.getSize();
 
         for (const span of spans) {
-          if (span.isFromOcr && span.isModified) {
-            const font = await pdfDoc.embedFont(
-              span.fontWeight === 'bold' ? StandardFonts.HelveticaBold : StandardFonts.Helvetica
-            );
-            const size = span.fontSize || 12;
-            const pdfY = span.pdfY !== undefined ? span.pdfY : (pageHeight - span.y - span.height);
-            page.drawText(span.currentText, {
-              x: span.pdfX !== undefined ? span.pdfX : span.x,
-              y: pdfY,
-              size,
-              font,
-              color: rgb(0.06, 0.09, 0.16),
-            });
+          if (!span.isModified) continue;
+          if (patchedSpanIds.has(span.id)) continue;
+
+          const pdfX = span.pdfX !== undefined ? span.pdfX : span.x;
+          // In PDF coordinates, transY is the font baseline
+          const pdfBaseline = span.baseline !== undefined
+            ? span.baseline
+            : span.pdfY !== undefined
+            ? span.pdfY
+            : (pageHeight - span.y - span.fontSize);
+
+          const size = span.fontSize || 12;
+          const boxWidth = Math.max(span.width, 10);
+          const boxHeight = Math.max(span.height, size * 1.15);
+
+          const rawLines = (span.currentText || '').split('\n');
+          const lineCount = Math.max(1, rawLines.length);
+          const lineHeight = span.lineHeight ? span.lineHeight * size : size * 1.25;
+
+          // Localized mask: cover ONLY the exact original text bounds.
+          // Bottom of descenders is baseline - (fontSize * 0.3).
+          // Top of ascenders/caps is baseline + (fontSize * 0.95).
+          const maskBottom = Math.max(0, pdfBaseline - (lineCount - 1) * lineHeight - size * 0.3 - 1);
+          const maskTop = pdfBaseline + size * 0.95 + 1;
+          const maskHeight = Math.max(boxHeight + 2, maskTop - maskBottom);
+
+          // Localized mask: cover ONLY the exact original text bounds
+          let maskColor = rgb(1, 1, 1);
+          if (span.backgroundColor && span.backgroundColor !== 'transparent') {
+            const bgObj = parseHexColor(span.backgroundColor);
+            maskColor = rgb(bgObj.r, bgObj.g, bgObj.b);
           }
+
+          page.drawRectangle({
+            x: Math.max(0, pdfX - 1),
+            y: maskBottom,
+            width: boxWidth + 2,
+            height: maskHeight,
+            color: maskColor,
+            opacity: 1.0,
+          });
+
+          // If deleted or empty, the mask cleanly removes the text from the document
+          if (span.isDeleted || !span.currentText || span.currentText.trim() === '') {
+            continue;
+          }
+
+          // Draw the replacement text with exact font, size, color, and formatting
+          const font = resolveFont(span.fontFamily, span.fontWeight, span.fontStyle);
+          const colorObj = parseHexColor(span.color, { r: 0.06, g: 0.09, b: 0.16 });
+          const color = rgb(colorObj.r, colorObj.g, colorObj.b);
+
+          const sanitizedLines = rawLines.map((l) => sanitizeWinAnsiText(l));
+
+          sanitizedLines.forEach((line, idx) => {
+            if (!line) return;
+            // Line 0 baseline is pdfBaseline, subsequent lines shift down by lineHeight
+            const lineY = pdfBaseline - idx * lineHeight;
+
+            let effectiveSize = size;
+            let baselineShift = 0;
+            if (span.verticalAlign === 'super') {
+              effectiveSize = Math.max(6, Math.round(size * 0.7));
+              baselineShift = size * 0.35;
+            } else if (span.verticalAlign === 'sub') {
+              effectiveSize = Math.max(6, Math.round(size * 0.7));
+              baselineShift = -size * 0.2;
+            }
+
+            const adjustedLineY = lineY + baselineShift;
+            const charSpacing = span.letterSpacing || 0;
+
+            let lineWidth = 0;
+            try {
+              lineWidth = font.widthOfTextAtSize(line, effectiveSize) + (line.length - 1) * charSpacing;
+            } catch {
+              lineWidth = line.length * effectiveSize * 0.55 + (line.length - 1) * charSpacing;
+            }
+
+            let lineX = pdfX;
+            if (span.textAlign === 'center') {
+              lineX = pdfX + Math.max(0, (boxWidth - lineWidth) / 2);
+            } else if (span.textAlign === 'right') {
+              lineX = pdfX + Math.max(0, boxWidth - lineWidth);
+            }
+
+            if (charSpacing > 0 && line.length > 1) {
+              let curCharX = lineX;
+              for (let cIdx = 0; cIdx < line.length; cIdx++) {
+                const ch = line[cIdx];
+                page.drawText(ch, {
+                  x: Math.max(0, curCharX),
+                  y: Math.max(0, adjustedLineY),
+                  size: effectiveSize,
+                  font,
+                  color,
+                });
+                let chW = 0;
+                try {
+                  chW = font.widthOfTextAtSize(ch, effectiveSize);
+                } catch {
+                  chW = effectiveSize * 0.55;
+                }
+                curCharX += chW + charSpacing;
+              }
+            } else {
+              page.drawText(line, {
+                x: Math.max(0, lineX),
+                y: Math.max(0, adjustedLineY),
+                size: effectiveSize,
+                font,
+                color,
+              });
+            }
+
+            if (span.underline) {
+              page.drawLine({
+                start: { x: Math.max(0, lineX), y: Math.max(0, adjustedLineY - 2) },
+                end: { x: Math.max(0, lineX + lineWidth), y: Math.max(0, adjustedLineY - 2) },
+                thickness: Math.max(1, effectiveSize * 0.08),
+                color,
+              });
+            }
+
+            if (span.strikethrough) {
+              page.drawLine({
+                start: { x: Math.max(0, lineX), y: Math.max(0, adjustedLineY + effectiveSize * 0.35) },
+                end: { x: Math.max(0, lineX + lineWidth), y: Math.max(0, adjustedLineY + effectiveSize * 0.35) },
+                thickness: Math.max(1, effectiveSize * 0.08),
+                color,
+              });
+            }
+          });
         }
       }
     }
@@ -74,12 +239,6 @@ export class AnnotationBurner {
       return await pdfDoc.save();
     }
     const pages = pdfDoc.getPages();
-
-    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    const helveticaOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
-    const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-    const courier = await pdfDoc.embedFont(StandardFonts.Courier);
 
     // Group annotations by pageIndex
     for (const annot of annotations) {

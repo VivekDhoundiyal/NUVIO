@@ -97,6 +97,7 @@ export interface PDFTextElement {
   sourceTextItemReference?: string;
 
   isModified: boolean;
+  isDeleted?: boolean;
   isFromOcr?: boolean;
   glyphs?: any[];
   words?: TextWordItem[];

@@ -28,6 +28,7 @@ export interface EditorCanvasProps {
   onAddAnnotation: (annot: AnnotationObject) => void;
   onUpdateAnnotation: (id: string, updated: Partial<AnnotationObject>) => void;
   onDeleteAnnotation: (id: string) => void;
+  onDeleteSpan?: (id: string) => void;
   onDuplicateAnnotation?: (id: string) => void;
   onBringForward?: () => void;
   onSendBackward?: () => void;
@@ -83,6 +84,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   onAddAnnotation,
   onUpdateAnnotation,
   onDeleteAnnotation,
+  onDeleteSpan,
   onDuplicateAnnotation,
   onBringForward,
   onSendBackward,
@@ -96,6 +98,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [editingTextValue, setEditingTextValue] = useState<string>('');
   const [editingWordId, setEditingWordId] = useState<string | null>(null);
   const [editingWordValue, setEditingWordValue] = useState<string>('');
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const initialWordOnEditRef = useRef<string>('');
 
   // Freehand drawing state with RAF throttling to eliminate drawing lag
@@ -142,18 +145,22 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         if (selectedObjectId) {
           e.preventDefault();
           onDeleteAnnotation(selectedObjectId);
+        } else if (selectedSpanId && onDeleteSpan) {
+          e.preventDefault();
+          onDeleteSpan(selectedSpanId);
         }
       } else if (e.key === 'Escape') {
         onSelectObject(null);
         onSelectSpan?.(null);
         setEditingSpanId(null);
         setEditingWordId(null);
+        setEditingAnnotationId(null);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedObjectId, onDeleteAnnotation, onSelectObject, onSelectSpan]);
+  }, [selectedObjectId, selectedSpanId, onDeleteAnnotation, onDeleteSpan, onSelectObject, onSelectSpan]);
 
   // Handle page click to insert objects (shapes, text, drawings, highlights, underlines, strikethroughs)
   const handlePageMouseDown = (e: React.MouseEvent, pageIndex: number) => {
@@ -641,6 +648,48 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
               {/* INTERACTIVE TEXT SPANS & PRECISION WORD LAYER (Real PDF Text Editing & Formatting Preservation) */}
               <div className="absolute inset-0 pointer-events-none">
                 {pageSpans.map((span) => {
+                  let spanLeft = span.x * zoom;
+                  let spanTop = span.y * zoom;
+                  let spanWidth = Math.max(span.width * zoom, 20);
+                  let spanHeight = Math.max(span.height * zoom, span.fontSize * zoom);
+
+                  if (page.rotation && page.rotation % 360 !== 0 && span.pdfX !== undefined && span.pdfY !== undefined) {
+                    const rect = PdfCoordinateSystem.pdfToViewport(
+                      span.pdfX,
+                      span.pdfY,
+                      span.width,
+                      span.height || span.fontSize,
+                      { width: page.width, height: page.height, rotation: page.rotation },
+                      zoom
+                    );
+                    spanLeft = rect.x;
+                    spanTop = rect.y;
+                    spanWidth = Math.max(rect.width, 20);
+                    spanHeight = Math.max(rect.height, span.fontSize * zoom);
+                  }
+
+                  // If span was deleted, render clean localized mask obscuring the original text on the PDF canvas
+                  if (span.isDeleted) {
+                    const isSelected = selectedSpanId === span.id;
+                    return (
+                      <div
+                        key={span.id}
+                        onClick={(e) => handleSpanClick(e, span)}
+                        title={`Deleted text: "${span.originalText}" (Click to select/restore)`}
+                        className={`absolute pointer-events-auto z-20 rounded-xs transition-shadow ${
+                          isSelected ? 'ring-2 ring-red-500 shadow-xs' : 'hover:ring-1 hover:ring-red-400'
+                        }`}
+                        style={{
+                          left: spanLeft,
+                          top: spanTop,
+                          width: spanWidth,
+                          height: spanHeight,
+                          backgroundColor: span.backgroundColor || '#ffffff',
+                        }}
+                      />
+                    );
+                  }
+
                   // If span has tokenized words, render word-level micro-editor & transparent hit targets
                   if (span.words && span.words.length > 0) {
                     return span.words.map((word) => {
@@ -650,13 +699,13 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                       let wordWidth = Math.max(word.width * zoom, 10);
                       let wordHeight = Math.max(word.height * zoom, word.fontSize * zoom);
 
-                      if (word.pdfX !== undefined && word.pdfY !== undefined) {
+                      if (page.rotation && page.rotation % 360 !== 0 && word.pdfX !== undefined && word.pdfY !== undefined) {
                         const rect = PdfCoordinateSystem.pdfToViewport(
                           word.pdfX,
                           word.pdfY,
                           word.width,
                           word.height || word.fontSize,
-                          { width: page.width, height: page.height, rotation: page.rotation || 0 },
+                          { width: page.width, height: page.height, rotation: page.rotation },
                           zoom
                         );
                         wordLeft = rect.x;
@@ -733,7 +782,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                               fontFamily: word.fontFamily,
                               fontWeight: word.fontWeight,
                               fontStyle: word.fontStyle,
-                              backgroundColor: span.backgroundColor || 'transparent',
+                              backgroundColor: span.backgroundColor || '#ffffff',
                               whiteSpace: 'nowrap',
                               lineHeight: `${wordHeight}px`,
                             }}
@@ -785,25 +834,6 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
                   // Fallback: span-level rendering if words are not tokenized
                   const isEditing = editingSpanId === span.id;
-                  let spanLeft = span.x * zoom;
-                  let spanTop = span.y * zoom;
-                  let spanWidth = Math.max(span.width * zoom, 20);
-                  let spanHeight = Math.max(span.height * zoom, span.fontSize * zoom);
-
-                  if (span.pdfX !== undefined && span.pdfY !== undefined) {
-                    const rect = PdfCoordinateSystem.pdfToViewport(
-                      span.pdfX,
-                      span.pdfY,
-                      span.width,
-                      span.height || span.fontSize,
-                      { width: page.width, height: page.height, rotation: page.rotation || 0 },
-                      zoom
-                    );
-                    spanLeft = rect.x;
-                    spanTop = rect.y;
-                    spanWidth = Math.max(rect.width, 20);
-                    spanHeight = Math.max(rect.height, span.fontSize * zoom);
-                  }
 
                   if (isEditing) {
                     const lines = (editingTextValue || '').split('\n');
@@ -952,7 +982,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                             : undefined,
                           textAlign: span.textAlign || 'left',
                           lineHeight: `${effectiveLineHeight}px`,
-                          backgroundColor: span.backgroundColor || 'transparent',
+                          backgroundColor: span.backgroundColor || '#ffffff',
                           whiteSpace: 'pre-wrap',
                           wordBreak: 'break-word',
                         }}
@@ -1070,30 +1100,61 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
                   {/* Inserted Text Object */}
                   {obj.type === 'text' && (
-                    <div
-                      className="w-full h-full flex items-center px-1 overflow-hidden break-words select-none"
-                      style={{
-                        fontSize: `${(obj.verticalAlign === 'super' || obj.verticalAlign === 'sub' ? Math.max(6, (obj.fontSize || 14) * 0.7) : (obj.fontSize || 14)) * zoom}px`,
-                        color: obj.textColor || '#0f172a',
-                        fontFamily: obj.fontFamily || 'Helvetica, sans-serif',
-                        fontWeight: obj.fontWeight || 'normal',
-                        fontStyle: obj.fontStyle || 'normal',
-                        textAlign: obj.textAlign || 'left',
-                        verticalAlign: obj.verticalAlign || 'baseline',
-                        letterSpacing: obj.letterSpacing ? `${obj.letterSpacing * zoom}px` : undefined,
-                        textDecoration: obj.strikethrough
-                          ? obj.underline
-                            ? 'underline line-through'
-                            : 'line-through'
-                          : obj.underline
-                          ? 'underline'
-                          : undefined,
-                        backgroundColor: obj.backgroundColor || 'transparent',
-                        opacity: obj.opacity !== undefined ? obj.opacity : 1,
-                      }}
-                    >
-                      {obj.text || ''}
-                    </div>
+                    editingAnnotationId === obj.id ? (
+                      <textarea
+                        autoFocus
+                        value={obj.text || ''}
+                        onChange={(e) => onUpdateAnnotation(obj.id, { text: e.target.value })}
+                        onBlur={() => setEditingAnnotationId(null)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            setEditingAnnotationId(null);
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          fontSize: `${(obj.verticalAlign === 'super' || obj.verticalAlign === 'sub' ? Math.max(6, (obj.fontSize || 14) * 0.7) : (obj.fontSize || 14)) * zoom}px`,
+                          color: obj.textColor || '#0f172a',
+                          fontFamily: obj.fontFamily || 'Helvetica, sans-serif',
+                          fontWeight: obj.fontWeight || 'normal',
+                          fontStyle: obj.fontStyle || 'normal',
+                          textAlign: obj.textAlign || 'left',
+                          lineHeight: 1.25,
+                          backgroundColor: obj.backgroundColor && obj.backgroundColor !== 'transparent' ? obj.backgroundColor : '#ffffff',
+                          resize: 'none',
+                        }}
+                        className="w-full h-full p-1 outline-none border border-brand-500 rounded-xs ring-1 ring-brand-500 font-sans"
+                      />
+                    ) : (
+                      <div
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setEditingAnnotationId(obj.id);
+                        }}
+                        className="w-full h-full flex items-center px-1 overflow-hidden break-words select-none cursor-text"
+                        style={{
+                          fontSize: `${(obj.verticalAlign === 'super' || obj.verticalAlign === 'sub' ? Math.max(6, (obj.fontSize || 14) * 0.7) : (obj.fontSize || 14)) * zoom}px`,
+                          color: obj.textColor || '#0f172a',
+                          fontFamily: obj.fontFamily || 'Helvetica, sans-serif',
+                          fontWeight: obj.fontWeight || 'normal',
+                          fontStyle: obj.fontStyle || 'normal',
+                          textAlign: obj.textAlign || 'left',
+                          verticalAlign: obj.verticalAlign || 'baseline',
+                          letterSpacing: obj.letterSpacing ? `${obj.letterSpacing * zoom}px` : undefined,
+                          textDecoration: obj.strikethrough
+                            ? obj.underline
+                              ? 'underline line-through'
+                              : 'line-through'
+                            : obj.underline
+                            ? 'underline'
+                            : undefined,
+                          backgroundColor: obj.backgroundColor || 'transparent',
+                          opacity: obj.opacity !== undefined ? obj.opacity : 1,
+                        }}
+                      >
+                        {obj.text || ''}
+                      </div>
+                    )
                   )}
 
                   {/* Watermark Object (Text or Image) */}

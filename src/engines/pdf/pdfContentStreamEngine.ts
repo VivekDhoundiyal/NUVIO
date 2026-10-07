@@ -22,7 +22,8 @@ export class PdfContentStreamEngine {
   public static async applyTextReplacements(
     pdfDoc: PDFDocument,
     editedSpansByPage: Record<number, EditableTextSpan[]>
-  ): Promise<void> {
+  ): Promise<Set<string>> {
+    const patchedSpanIds = new Set<string>();
     const pages = pdfDoc.getPages();
 
     for (const [pageIdxStr, spans] of Object.entries(editedSpansByPage)) {
@@ -40,6 +41,7 @@ export class PdfContentStreamEngine {
       if (streamRefs.length === 0) continue;
 
       const patchesForPage: RunPatch[] = [];
+      const candidatePatchedSpanIds = new Set<string>();
 
       for (let sIdx = 0; sIdx < streamTexts.length; sIdx++) {
         const streamText = streamTexts[sIdx];
@@ -53,17 +55,38 @@ export class PdfContentStreamEngine {
         if (runs.length === 0) continue;
 
         for (const span of modifiedSpans) {
+          // If the span has style changes or was deleted, in-stream patching cannot alter font/color/size.
+          // Defer to surgical replacement to guarantee complete visual fidelity.
+          const hasStyleOrDeleteChange =
+            span.isDeleted ||
+            (span.color && span.originalColor && span.color !== span.originalColor) ||
+            (span.fontSize && span.originalFontSize && span.fontSize !== span.originalFontSize) ||
+            (span.fontFamily && span.originalFont && span.fontFamily !== span.originalFont) ||
+            span.underline ||
+            span.strikethrough;
+
+          if (hasStyleOrDeleteChange) {
+            continue;
+          }
+
           const modifiedWords = span.words?.filter((w) => w.isModified && w.text !== w.originalText);
 
           // Case A: Precision word-level modifications present
           if (modifiedWords && modifiedWords.length > 0) {
+            let allWordsPatched = true;
             for (const word of modifiedWords) {
               const matchingRun = this.findMatchingRunForWord(runs, word, sIdx);
-              if (!matchingRun) continue;
+              if (!matchingRun) {
+                allWordsPatched = false;
+                continue;
+              }
 
               const runText = matchingRun.decodedText || matchingRun.text || '';
               const newRunText = runText.replace(word.originalText, word.text);
-              if (newRunText === runText) continue;
+              if (newRunText === runText) {
+                allWordsPatched = false;
+                continue;
+              }
 
               const diff = PdfTextEditEngine.computeDiffRange(runText, newRunText);
               if (diff.origChangeLen === 0 && diff.replChangeText === '') continue;
@@ -76,6 +99,9 @@ export class PdfContentStreamEngine {
                 fontResolver
               );
               patchesForPage.push(patch);
+            }
+            if (allWordsPatched) {
+              candidatePatchedSpanIds.add(span.id);
             }
           } else {
             // Case B: Span-level modification (PropertyPanel, paste, or full line edit)
@@ -97,14 +123,20 @@ export class PdfContentStreamEngine {
               fontResolver
             );
             patchesForPage.push(patch);
+            candidatePatchedSpanIds.add(span.id);
           }
         }
       }
 
       if (patchesForPage.length > 0) {
         await PdfContentStreamPatcher.applyPatchesToPage(pdfDoc, page, patchesForPage);
+        for (const id of candidatePatchedSpanIds) {
+          patchedSpanIds.add(id);
+        }
       }
     }
+
+    return patchedSpanIds;
   }
 
   /**

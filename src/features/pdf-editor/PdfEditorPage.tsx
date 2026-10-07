@@ -619,11 +619,41 @@ export const PdfEditorPage: React.FC = () => {
     }
   }, [selectedObjectId, handleDuplicateAnnotation]);
 
+  const handleDeleteSpan = useCallback(
+    (spanId: string) => {
+      for (const pIdxStr in editableSpansByPage) {
+        const pIdx = Number(pIdxStr);
+        const spanList = editableSpansByPage[pIdx];
+        const targetSpan = spanList?.find((s) => s.id === spanId);
+        if (targetSpan) {
+          const updatedSpan: EditableTextSpan = {
+            ...targetSpan,
+            isDeleted: true,
+            currentText: '',
+            isModified: true,
+          };
+          const nextSpansByPage = {
+            ...editableSpansByPage,
+            [pIdx]: spanList.map((s) => (s.id === spanId ? updatedSpan : s)),
+          };
+          setEditableSpansByPage(nextSpansByPage);
+          setSelectedSpanId(null);
+          recordHistory(annotations, nextSpansByPage, pages);
+          toast.info('Text deleted', 'Original text masked and removed.');
+          break;
+        }
+      }
+    },
+    [editableSpansByPage, annotations, pages, recordHistory, toast]
+  );
+
   const handleDeleteSelected = useCallback(() => {
     if (selectedObjectId) {
       handleDeleteAnnotation(selectedObjectId);
+    } else if (selectedSpanId) {
+      handleDeleteSpan(selectedSpanId);
     }
-  }, [selectedObjectId, handleDeleteAnnotation]);
+  }, [selectedObjectId, selectedSpanId, handleDeleteAnnotation, handleDeleteSpan]);
 
   // Global keyboard shortcuts for Copy, Paste, Duplicate, Delete
   useEffect(() => {
@@ -650,7 +680,7 @@ export const PdfEditorPage: React.FC = () => {
           handleDuplicate();
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedObjectId) {
+        if (selectedObjectId || selectedSpanId) {
           e.preventDefault();
           handleDeleteSelected();
         }
@@ -884,6 +914,16 @@ export const PdfEditorPage: React.FC = () => {
         annotations,
         editableSpansByPage
       );
+
+      // Verify integrity by inspecting exported document structure
+      try {
+        const verifyDoc = await pdfjsLib.getDocument({ data: processedPdfBytes }).promise;
+        if (verifyDoc.numPages !== pages.length) {
+          console.warn(`Exported PDF page count mismatch: expected ${pages.length}, got ${verifyDoc.numPages}`);
+        }
+      } catch (verifyErr) {
+        console.warn('Exported PDF verification notice:', verifyErr);
+      }
 
       setExportStep('Inspecting document fidelity & structure...');
       // 2. Automated quality check via ValidationEngine
@@ -1276,6 +1316,7 @@ export const PdfEditorPage: React.FC = () => {
               onAddAnnotation={handleAddAnnotation}
               onUpdateAnnotation={handleUpdateAnnotation}
               onDeleteAnnotation={handleDeleteAnnotation}
+              onDeleteSpan={handleDeleteSpan}
               onDuplicateAnnotation={handleDuplicateAnnotation}
               onBringForward={handleBringForward}
               onSendBackward={handleSendBackward}
@@ -1305,6 +1346,7 @@ export const PdfEditorPage: React.FC = () => {
               onDeleteObject={() => {
                 if (selectedObjectId) handleDeleteAnnotation(selectedObjectId);
               }}
+              onDeleteSpan={selectedSpan ? () => handleDeleteSpan(selectedSpan.id) : undefined}
               onResetSpan={handleResetSpan}
               onDuplicateObject={() => {
                 if (selectedObjectId) handleDuplicateAnnotation(selectedObjectId);

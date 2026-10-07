@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { Split, Download, ShieldCheck } from 'lucide-react';
@@ -11,6 +11,7 @@ import { ValidationEngine } from '../../engines/validation/validationEngine';
 import { ValidationModal } from '../../components/validation/ValidationModal';
 import type { ValidationReport } from '../../types/document';
 import { StorageService } from '../../services/storage/db';
+import { FileSessionStore } from '../../services/storage/fileSessionStore';
 
 export const SplitPdfPage: React.FC = () => {
   const toast = useToast();
@@ -18,15 +19,16 @@ export const SplitPdfPage: React.FC = () => {
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [totalPages, setTotalPages] = useState<number>(0);
 
-  const [splitMode, setSplitMode] = useState<'all' | 'range'>('all');
+  const [splitMode, setSplitMode] = useState<'all' | 'range' | 'chunk'>('all');
   const [rangeInput, setRangeInput] = useState<string>('1-2');
+  const [chunkSize, setChunkSize] = useState<number>(2);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [validationReport, setValidationReport] = useState<ValidationReport | undefined>(undefined);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [splitResults, setSplitResults] = useState<Array<{ name: string; bytes: Uint8Array }>>([]);
 
-  const handleFileSelected = async (files: File[]) => {
+  const handleFileSelected = useCallback(async (files: File[]) => {
     const f = files[0];
     if (!f) return;
 
@@ -44,7 +46,21 @@ export const SplitPdfPage: React.FC = () => {
     } catch (e: any) {
       toast.error('Failed to parse PDF', e.message);
     }
-  };
+  }, [toast]);
+
+  const hasLoadedSessionRef = useRef(false);
+
+  // Auto-load file from active session
+  useEffect(() => {
+    if (hasLoadedSessionRef.current) return;
+    const active = FileSessionStore.getActiveFile();
+    if (active) {
+      hasLoadedSessionRef.current = true;
+      setTimeout(() => {
+        handleFileSelected([active.file]);
+      }, 0);
+    }
+  }, [handleFileSelected]);
 
   const handleSplit = async () => {
     if (!pdfBytes || !file) return;
@@ -55,13 +71,30 @@ export const SplitPdfPage: React.FC = () => {
       const baseName = file.name.replace(/\.pdf$/i, '');
 
       if (splitMode === 'all') {
-        // Split every page
+        // Split every single page
         const ranges = Array.from({ length: totalPages }, (_, i) => ({ start: i, end: i }));
         const pdfParts = await PdfEngine.splitPdf(pdfBytes, ranges);
 
         pdfParts.forEach((bytes, idx) => {
           results.push({
             name: `${baseName}-page-${idx + 1}.pdf`,
+            bytes,
+          });
+        });
+      } else if (splitMode === 'chunk') {
+        // Split every N pages
+        const n = Math.max(1, chunkSize);
+        const ranges: { start: number; end: number }[] = [];
+        for (let i = 0; i < totalPages; i += n) {
+          ranges.push({ start: i, end: Math.min(totalPages - 1, i + n - 1) });
+        }
+
+        const pdfParts = await PdfEngine.splitPdf(pdfBytes, ranges);
+        pdfParts.forEach((bytes, idx) => {
+          const startP = ranges[idx].start + 1;
+          const endP = ranges[idx].end + 1;
+          results.push({
+            name: `${baseName}-pages-${startP}${startP !== endP ? `-${endP}` : ''}.pdf`,
             bytes,
           });
         });
@@ -176,6 +209,7 @@ export const SplitPdfPage: React.FC = () => {
                 setFile(null);
                 setPdfBytes(null);
                 setSplitResults([]);
+                FileSessionStore.clear();
               }}
             >
               Change File
@@ -189,6 +223,7 @@ export const SplitPdfPage: React.FC = () => {
               tabs={[
                 { id: 'all', label: 'Split Every Page' },
                 { id: 'range', label: 'Custom Range' },
+                { id: 'chunk', label: 'Every N Pages' },
               ]}
             />
 
@@ -207,6 +242,27 @@ export const SplitPdfPage: React.FC = () => {
                 <span className="text-[11px] text-slate-400">
                   Example: "1-2, 4" will create two files: pages 1 to 2, and page 4.
                 </span>
+              </div>
+            )}
+
+            {splitMode === 'chunk' && (
+              <div className="flex flex-col gap-1.5 text-xs">
+                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                  Split Document into Chunks of N Pages (Total {totalPages} pages)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min={1}
+                    max={Math.max(1, totalPages)}
+                    value={chunkSize}
+                    onChange={(e) => setChunkSize(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-28 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono"
+                  />
+                  <span className="text-slate-500 text-xs">
+                    Will generate {Math.ceil(totalPages / Math.max(1, chunkSize))} separate PDF file(s).
+                  </span>
+                </div>
               </div>
             )}
 

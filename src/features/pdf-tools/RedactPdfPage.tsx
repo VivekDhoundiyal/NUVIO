@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { saveAs } from 'file-saver';
 import { ShieldAlert, ArrowLeft, Download, RefreshCw, Trash2, FileText, AlertTriangle } from 'lucide-react';
@@ -8,6 +8,7 @@ import type { PageInfo } from '../../types/document';
 import { PdfEngine } from '../../engines/pdf/pdfEngine';
 import { PdfRedactionEngine, type RedactionArea } from '../../engines/pdf/pdfRedactionEngine';
 import { StorageService } from '../../services/storage/db';
+import { FileSessionStore } from '../../services/storage/fileSessionStore';
 
 import { FileDropzone } from '../../components/ui/FileDropzone';
 import { Button } from '../../components/ui/Button';
@@ -35,7 +36,7 @@ export const RedactPdfPage: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const handleFileSelected = async (files: File[]) => {
+  const handleFileSelected = useCallback(async (files: File[]) => {
     const file = files[0];
     if (!file) return;
 
@@ -64,7 +65,21 @@ export const RedactPdfPage: React.FC = () => {
     } catch (err: any) {
       toast.error('Failed to load PDF', err.message || 'File could not be parsed.');
     }
-  };
+  }, [toast]);
+
+  const hasLoadedSessionRef = useRef(false);
+
+  // Auto-load active file from session
+  useEffect(() => {
+    if (hasLoadedSessionRef.current) return;
+    const active = FileSessionStore.getActiveFile();
+    if (active) {
+      hasLoadedSessionRef.current = true;
+      setTimeout(() => {
+        handleFileSelected([active.file]);
+      }, 0);
+    }
+  }, [handleFileSelected]);
 
   // Render active page to canvas
   useEffect(() => {
@@ -197,6 +212,7 @@ export const RedactPdfPage: React.FC = () => {
               onClick={() => {
                 setPdfBytes(null);
                 setRedactions([]);
+                FileSessionStore.clear();
               }}
             >
               Change File

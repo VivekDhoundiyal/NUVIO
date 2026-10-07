@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { saveAs } from 'file-saver';
 import { Lock, Eye, EyeOff, RefreshCw, Key, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import { PdfEngine } from '../../engines/pdf/pdfEngine';
 import { PdfProtectionEngine } from '../../engines/pdf/pdfProtectionEngine';
 import { StorageService } from '../../services/storage/db';
+import { FileSessionStore } from '../../services/storage/fileSessionStore';
 
 import { FileDropzone } from '../../components/ui/FileDropzone';
 import { Button } from '../../components/ui/Button';
@@ -32,7 +33,7 @@ export const ProtectPdfPage: React.FC = () => {
 
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  const handleFileSelected = async (files: File[]) => {
+  const handleFileSelected = useCallback(async (files: File[]) => {
     const file = files[0];
     if (!file) return;
 
@@ -50,7 +51,21 @@ export const ProtectPdfPage: React.FC = () => {
     } catch (err: any) {
       toast.error('Failed to load PDF', err.message || 'File could not be parsed.');
     }
-  };
+  }, [toast]);
+
+  const hasLoadedSessionRef = useRef(false);
+
+  // Auto-load active file from session
+  useEffect(() => {
+    if (hasLoadedSessionRef.current) return;
+    const active = FileSessionStore.getActiveFile();
+    if (active) {
+      hasLoadedSessionRef.current = true;
+      setTimeout(() => {
+        handleFileSelected([active.file]);
+      }, 0);
+    }
+  }, [handleFileSelected]);
 
   const getPasswordStrength = () => {
     if (!password) return { label: 'Empty', color: 'bg-slate-200', score: 0 };
@@ -91,6 +106,12 @@ export const ProtectPdfPage: React.FC = () => {
         allowModifying,
         allowFillingForms,
       });
+
+      // Verify that output binary is genuinely encrypted
+      const isEncrypted = await PdfProtectionEngine.isPdfEncrypted(protectedBytes);
+      if (!isEncrypted) {
+        console.warn('Protected PDF verification check: encryption flag not detected');
+      }
 
       const blob = new Blob([protectedBytes as any], { type: 'application/pdf' });
       const finalName = fileName.replace(/\.pdf$/i, '') + '-protected.pdf';
@@ -151,6 +172,7 @@ export const ProtectPdfPage: React.FC = () => {
               setPdfBytes(null);
               setPassword('');
               setConfirmPassword('');
+              FileSessionStore.clear();
             }}
           >
             Change File

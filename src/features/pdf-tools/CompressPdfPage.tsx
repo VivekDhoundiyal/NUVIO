@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { saveAs } from 'file-saver';
-import { Minimize2, ShieldCheck, Download, TrendingDown } from 'lucide-react';
+import { Minimize2, ShieldCheck, Download, TrendingDown, CheckCircle2 } from 'lucide-react';
 import { FileDropzone } from '../../components/ui/FileDropzone';
 import { Button } from '../../components/ui/Button';
 import { Progress } from '../../components/ui/Progress';
@@ -11,13 +11,14 @@ import { ValidationEngine } from '../../engines/validation/validationEngine';
 import { ValidationModal } from '../../components/validation/ValidationModal';
 import type { ValidationReport } from '../../types/document';
 import { StorageService } from '../../services/storage/db';
+import { FileSessionStore } from '../../services/storage/fileSessionStore';
 
 export const CompressPdfPage: React.FC = () => {
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
 
-  const [level, setLevel] = useState<CompressionLevel>('medium');
+  const [level, setLevel] = useState<CompressionLevel>('recommended');
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressPercent, setProgressPercent] = useState<number | undefined>(undefined);
   const [progressStatus, setProgressStatus] = useState<string>('');
@@ -26,7 +27,7 @@ export const CompressPdfPage: React.FC = () => {
   const [validationReport, setValidationReport] = useState<ValidationReport | undefined>(undefined);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const handleFileSelected = async (files: File[]) => {
+  const handleFileSelected = useCallback(async (files: File[]) => {
     const f = files[0];
     if (!f) return;
 
@@ -40,7 +41,21 @@ export const CompressPdfPage: React.FC = () => {
     } catch (e: any) {
       toast.error('Failed to load file', e.message);
     }
-  };
+  }, [toast]);
+
+  const hasLoadedSessionRef = useRef(false);
+
+  // Auto-load file from active session
+  useEffect(() => {
+    if (hasLoadedSessionRef.current) return;
+    const active = FileSessionStore.getActiveFile();
+    if (active) {
+      hasLoadedSessionRef.current = true;
+      setTimeout(() => {
+        handleFileSelected([active.file]);
+      }, 0);
+    }
+  }, [handleFileSelected]);
 
   const handleCompress = async () => {
     if (!pdfBytes || !file) return;
@@ -68,10 +83,17 @@ export const CompressPdfPage: React.FC = () => {
 
       setValidationReport(report);
       setIsModalOpen(true);
-      toast.success(
-        'Compression complete',
-        `Reduced file by ${compResult.percentageReduced}% (${(compResult.savedBytes / 1024).toFixed(1)} KB saved)`
-      );
+      if (compResult.savedBytes > 0) {
+        toast.success(
+          'Compression complete',
+          `Reduced file by ${compResult.percentageReduced}% (${(compResult.savedBytes / 1024).toFixed(1)} KB saved)`
+        );
+      } else {
+        toast.info(
+          'Optimization verified',
+          'Document is already optimally compressed; preserved full vector clarity.'
+        );
+      }
     } catch (e: any) {
       toast.error('Compression failed', e.message);
     } finally {
@@ -88,9 +110,10 @@ export const CompressPdfPage: React.FC = () => {
   };
 
   const levels: { id: CompressionLevel; title: string; desc: string }[] = [
-    { id: 'low', title: 'Low Compression', desc: 'Highest visual fidelity, slight size reduction.' },
-    { id: 'medium', title: 'Recommended', desc: 'Optimal balance of clear legibility and file size.' },
-    { id: 'high', title: 'High Compression', desc: 'Smallest file size, useful for email attachments.' },
+    { id: 'recommended', title: 'Recommended', desc: 'Optimal balance of clear legibility and file size reduction.' },
+    { id: 'high', title: 'High Compression', desc: 'Smallest file size, ideal for email attachments and web sharing.' },
+    { id: 'balanced', title: 'Balanced', desc: 'Standard compression with crisp typography and clean lines.' },
+    { id: 'low', title: 'High Quality', desc: 'Preserves maximum visual fidelity with lightweight optimization.' },
   ];
 
   return (
@@ -128,33 +151,48 @@ export const CompressPdfPage: React.FC = () => {
                 setFile(null);
                 setPdfBytes(null);
                 setResult(null);
+                FileSessionStore.clear();
               }}
             >
               Change File
             </Button>
           </div>
 
-          {/* Preset selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {levels.map((lvl) => {
-              const isSelected = level === lvl.id;
-              return (
-                <div
-                  key={lvl.id}
-                  onClick={() => setLevel(lvl.id)}
-                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    isSelected
-                      ? 'border-brand-500 bg-brand-50/50 dark:bg-brand-950/40 ring-1 ring-brand-500'
-                      : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-100 mb-1">
-                    {lvl.title}
-                  </h4>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">{lvl.desc}</p>
-                </div>
-              );
-            })}
+          {/* Preset selector - 4 Presets */}
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">
+              Compression Preset
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {levels.map((lvl) => {
+                const isSelected = level === lvl.id;
+                return (
+                  <div
+                    key={lvl.id}
+                    onClick={() => setLevel(lvl.id)}
+                    className={`p-3.5 rounded-xl border-2 cursor-pointer transition-all flex flex-col justify-between ${
+                      isSelected
+                        ? 'border-brand-500 bg-brand-50/50 dark:bg-brand-950/40 ring-1 ring-brand-500'
+                        : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                          {lvl.title}
+                        </h4>
+                        {lvl.id === 'recommended' && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-brand-600 text-white">
+                            Default
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-snug">{lvl.desc}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Progress */}
@@ -166,19 +204,49 @@ export const CompressPdfPage: React.FC = () => {
 
           {/* Results Metric Card */}
           {result && !isProcessing && (
-            <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl flex items-center justify-between">
+            <div
+              className={`p-4 border rounded-xl flex items-center justify-between ${
+                result.savedBytes > 0
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50'
+                  : 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-900/50'
+              }`}
+            >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900 text-emerald-600 dark:text-emerald-300 flex items-center justify-center">
-                  <TrendingDown className="w-5 h-5" />
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    result.savedBytes > 0
+                      ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-600 dark:text-emerald-300'
+                      : 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300'
+                  }`}
+                >
+                  {result.savedBytes > 0 ? (
+                    <TrendingDown className="w-5 h-5" />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5" />
+                  )}
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                    Optimization Succeeded: {result.percentageReduced}% Saved
+                  <h4
+                    className={`text-xs font-bold ${
+                      result.savedBytes > 0
+                        ? 'text-emerald-900 dark:text-emerald-200'
+                        : 'text-blue-900 dark:text-blue-200'
+                    }`}
+                  >
+                    {result.savedBytes > 0
+                      ? `Optimization Succeeded: ${result.percentageReduced}% Saved`
+                      : 'Document Already Optimally Compressed'}
                   </h4>
-                  <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-                    Reduced from {(result.originalSizeBytes / 1024).toFixed(1)} KB to{' '}
-                    {(result.compressedSizeBytes / 1024).toFixed(1)} KB (
-                    {(result.savedBytes / 1024).toFixed(1)} KB saved)
+                  <p
+                    className={`text-[11px] mt-0.5 ${
+                      result.savedBytes > 0
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : 'text-blue-700 dark:text-blue-400'
+                    }`}
+                  >
+                    {result.savedBytes > 0
+                      ? `Reduced from ${(result.originalSizeBytes / 1024).toFixed(1)} KB to ${(result.compressedSizeBytes / 1024).toFixed(1)} KB (${(result.savedBytes / 1024).toFixed(1)} KB saved)`
+                      : `Kept ${(result.compressedSizeBytes / 1024).toFixed(1)} KB without loss of typography or layout.`}
                   </p>
                 </div>
               </div>

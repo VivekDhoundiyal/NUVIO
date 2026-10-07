@@ -717,7 +717,21 @@ export class PdfEngine {
       opacity?: number;
       rotationAngle?: number;
       color?: { r: number; g: number; b: number };
-      position?: 'center' | 'diagonal' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'tile';
+      position?:
+        | 'center'
+        | 'diagonal'
+        | 'top-left'
+        | 'top-center'
+        | 'top-right'
+        | 'middle-left'
+        | 'center-left'
+        | 'middle-right'
+        | 'center-right'
+        | 'bottom-left'
+        | 'bottom-center'
+        | 'bottom-right'
+        | 'tile'
+        | string;
       layer?: 'above' | 'behind';
       pageFilter?: 'all' | 'odd' | 'even' | number[] | string;
     } = {}
@@ -784,8 +798,12 @@ export class PdfEngine {
 
         const getCoords = (pos: string) => {
           if (pos === 'top-left') return [{ x: 40, y: pH - targetH - 40 }];
+          if (pos === 'top-center') return [{ x: (pW - targetW) / 2, y: pH - targetH - 40 }];
           if (pos === 'top-right') return [{ x: pW - targetW - 40, y: pH - targetH - 40 }];
+          if (pos === 'middle-left' || pos === 'center-left') return [{ x: 40, y: (pH - targetH) / 2 }];
+          if (pos === 'middle-right' || pos === 'center-right') return [{ x: pW - targetW - 40, y: (pH - targetH) / 2 }];
           if (pos === 'bottom-left') return [{ x: 40, y: 40 }];
+          if (pos === 'bottom-center') return [{ x: (pW - targetW) / 2, y: 40 }];
           if (pos === 'bottom-right') return [{ x: pW - targetW - 40, y: 40 }];
           if (pos === 'tile') {
             const pts = [];
@@ -832,8 +850,12 @@ export class PdfEngine {
 
         const getCoords = (pos: string) => {
           if (pos === 'top-left') return [{ x: 40, y: pH - textH - 40 }];
+          if (pos === 'top-center') return [{ x: (pW - textW) / 2, y: pH - textH - 40 }];
           if (pos === 'top-right') return [{ x: pW - textW - 40, y: pH - textH - 40 }];
+          if (pos === 'middle-left' || pos === 'center-left') return [{ x: 40, y: (pH - textH) / 2 }];
+          if (pos === 'middle-right' || pos === 'center-right') return [{ x: pW - textW - 40, y: (pH - textH) / 2 }];
           if (pos === 'bottom-left') return [{ x: 40, y: 40 }];
+          if (pos === 'bottom-center') return [{ x: (pW - textW) / 2, y: 40 }];
           if (pos === 'bottom-right') return [{ x: pW - textW - 40, y: 40 }];
           if (pos === 'tile') {
             const pts = [];

@@ -18,7 +18,18 @@ import type { ValidationReport } from '../../types/document';
 import { StorageService } from '../../services/storage/db';
 import { FileSessionStore } from '../../services/storage/fileSessionStore';
 
-type PositionPreset = 'center' | 'diagonal' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'tile';
+type PositionPreset =
+  | 'center'
+  | 'diagonal'
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'middle-left'
+  | 'middle-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right'
+  | 'tile';
 type PageFilterType = 'all' | 'odd' | 'even' | 'custom';
 
 export const WatermarkPage: React.FC = () => {
@@ -152,10 +163,18 @@ export const WatermarkPage: React.FC = () => {
           }
         } else if (position === 'top-left') {
           drawRotatedText(40, 40);
+        } else if (position === 'top-center') {
+          drawRotatedText(canvas.width / 2, 40);
         } else if (position === 'top-right') {
           drawRotatedText(canvas.width - 40, 40);
+        } else if (position === 'middle-left') {
+          drawRotatedText(40, canvas.height / 2);
+        } else if (position === 'middle-right') {
+          drawRotatedText(canvas.width - 40, canvas.height / 2);
         } else if (position === 'bottom-left') {
           drawRotatedText(40, canvas.height - 40);
+        } else if (position === 'bottom-center') {
+          drawRotatedText(canvas.width / 2, canvas.height - 40);
         } else if (position === 'bottom-right') {
           drawRotatedText(canvas.width - 40, canvas.height - 40);
         } else {
@@ -188,10 +207,18 @@ export const WatermarkPage: React.FC = () => {
             }
           } else if (position === 'top-left') {
             drawRotatedImg(scaledW / 2 + 20, scaledH / 2 + 20);
+          } else if (position === 'top-center') {
+            drawRotatedImg(canvas.width / 2, scaledH / 2 + 20);
           } else if (position === 'top-right') {
             drawRotatedImg(canvas.width - scaledW / 2 - 20, scaledH / 2 + 20);
+          } else if (position === 'middle-left') {
+            drawRotatedImg(scaledW / 2 + 20, canvas.height / 2);
+          } else if (position === 'middle-right') {
+            drawRotatedImg(canvas.width - scaledW / 2 - 20, canvas.height / 2);
           } else if (position === 'bottom-left') {
             drawRotatedImg(scaledW / 2 + 20, canvas.height - scaledH / 2 - 20);
+          } else if (position === 'bottom-center') {
+            drawRotatedImg(canvas.width / 2, canvas.height - scaledH / 2 - 20);
           } else if (position === 'bottom-right') {
             drawRotatedImg(canvas.width - scaledW / 2 - 20, canvas.height - scaledH / 2 - 20);
           } else {
@@ -460,15 +487,19 @@ export const WatermarkPage: React.FC = () => {
                   { id: 'center', label: 'Center' },
                   { id: 'tile', label: 'Tile / Grid' },
                   { id: 'top-left', label: 'Top Left' },
+                  { id: 'top-center', label: 'Top Center' },
                   { id: 'top-right', label: 'Top Right' },
+                  { id: 'middle-left', label: 'Middle Left' },
+                  { id: 'middle-right', label: 'Middle Right' },
                   { id: 'bottom-left', label: 'Bottom Left' },
+                  { id: 'bottom-center', label: 'Bottom Center' },
                   { id: 'bottom-right', label: 'Bottom Right' },
                 ].map((p) => (
                   <button
                     key={p.id}
                     type="button"
                     onClick={() => handlePositionChange(p.id as PositionPreset)}
-                    className={`py-2 px-2.5 rounded-xl border text-center font-bold text-[11px] transition-all ${
+                    className={`py-2 px-2 rounded-xl border text-center font-bold text-[11px] transition-all ${
                       position === p.id
                         ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/80 text-brand-700 dark:text-brand-300 shadow-xs'
                         : 'border-paper-300 dark:border-ink-800 hover:bg-paper-100 dark:hover:bg-ink-800 text-ink-700 dark:text-ink-300'

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { saveAs } from 'file-saver';
-import { FileText, ShieldCheck, Download, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { FileText, ShieldCheck, Download, ArrowRight, CheckCircle2, ScanText, AlertCircle } from 'lucide-react';
 import { FileDropzone } from '../../components/ui/FileDropzone';
 import { Button } from '../../components/ui/Button';
 import { Progress } from '../../components/ui/Progress';
@@ -11,12 +12,14 @@ import { ValidationEngine } from '../../engines/validation/validationEngine';
 import { ValidationModal } from '../../components/validation/ValidationModal';
 import type { ValidationReport } from '../../types/document';
 import { StorageService } from '../../services/storage/db';
+import { FileSessionStore } from '../../services/storage/fileSessionStore';
 
 export const PdfToWordPage: React.FC = () => {
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [pageCount, setPageCount] = useState<number>(0);
+  const [isScannedDoc, setIsScannedDoc] = useState<boolean>(false);
 
   const [isConverting, setIsConverting] = useState(false);
   const [progressPercent, setProgressPercent] = useState<number | undefined>(undefined);
@@ -26,7 +29,7 @@ export const PdfToWordPage: React.FC = () => {
   const [validationReport, setValidationReport] = useState<ValidationReport | undefined>(undefined);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const handleFileSelected = async (files: File[]) => {
+  const handleFileSelected = useCallback(async (files: File[]) => {
     const f = files[0];
     if (!f) return;
 
@@ -39,12 +42,36 @@ export const PdfToWordPage: React.FC = () => {
       setPdfBytes(uint8);
       setPageCount(info.pages.length);
       setDocxBytes(null);
+
+      // Inspect whether document is scanned (no selectable vector text)
+      try {
+        const docProxy = await PdfEngine.loadPdfJsDoc(uint8);
+        const { isScanned } = await PdfEngine.extractPageTextSpans(docProxy, 1);
+        setIsScannedDoc(isScanned);
+      } catch {
+        setIsScannedDoc(false);
+      }
+
       await StorageService.logToolUsage('pdf-to-word');
       toast.success('PDF loaded', `${f.name} (${info.pages.length} pages)`);
     } catch (e: any) {
       toast.error('Failed to parse PDF', e.message);
     }
-  };
+  }, [toast]);
+
+  const hasLoadedSessionRef = useRef(false);
+
+  // Auto-load active file from session store if navigated from upload arena
+  useEffect(() => {
+    if (hasLoadedSessionRef.current) return;
+    const active = FileSessionStore.getActiveFile();
+    if (active) {
+      hasLoadedSessionRef.current = true;
+      setTimeout(() => {
+        handleFileSelected([active.file]);
+      }, 0);
+    }
+  }, [handleFileSelected]);
 
   const handleConvert = async () => {
     if (!pdfBytes || !file) return;
@@ -124,11 +151,36 @@ export const PdfToWordPage: React.FC = () => {
                 setFile(null);
                 setPdfBytes(null);
                 setDocxBytes(null);
+                FileSessionStore.clear();
               }}
             >
               Change File
             </Button>
           </div>
+
+          {/* Scanned document banner if detected */}
+          {isScannedDoc && (
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-start gap-3 text-xs">
+              <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <span className="font-bold text-amber-900 dark:text-amber-200 block">
+                  Scanned Document Detected
+                </span>
+                <p className="text-amber-700 dark:text-amber-300 mt-0.5">
+                  This PDF appears to contain raster scans without embedded text. You can still convert it directly, or run on-device Local OCR to extract searchable text first.
+                </p>
+                <div className="mt-2.5">
+                  <Link
+                    to="/ocr-pdf"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11px] transition-colors"
+                  >
+                    <ScanText className="w-3.5 h-3.5" />
+                    Open in Local OCR
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Workflow card */}
           <div className="flex items-center justify-between p-4 rounded-xl bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 text-xs">

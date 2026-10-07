@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { saveAs } from 'file-saver';
 import { ScanText, Copy, Download, ShieldCheck, Check } from 'lucide-react';
 import { FileDropzone } from '../../components/ui/FileDropzone';
@@ -7,11 +7,14 @@ import { Select } from '../../components/ui/Select';
 import { Progress } from '../../components/ui/Progress';
 import { useToast } from '../../components/ui/useToast';
 import { OcrEngine } from '../../engines/ocr/ocrEngine';
+import { PdfEngine } from '../../engines/pdf/pdfEngine';
 import { StorageService } from '../../services/storage/db';
+import { FileSessionStore } from '../../services/storage/fileSessionStore';
 
 export const OcrPage: React.FC = () => {
   const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
+  const [pageCount, setPageCount] = useState<number>(1);
   const [lang, setLang] = useState<string>('eng');
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -21,14 +24,41 @@ export const OcrPage: React.FC = () => {
   const [extractedText, setExtractedText] = useState<string>('');
   const [hasCopied, setHasCopied] = useState(false);
 
-  const handleFileSelected = async (files: File[]) => {
+  const handleFileSelected = useCallback(async (files: File[]) => {
     const f = files[0];
     if (!f) return;
     setFile(f);
     setExtractedText('');
+
+    if (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')) {
+      try {
+        const buffer = await f.arrayBuffer();
+        const info = await PdfEngine.getPdfInfo(new Uint8Array(buffer), f.name);
+        setPageCount(info.pages.length);
+      } catch {
+        setPageCount(1);
+      }
+    } else {
+      setPageCount(1);
+    }
+
     await StorageService.logToolUsage('ocr-pdf');
     toast.success('Document loaded', `${f.name} ready for OCR`);
-  };
+  }, [toast]);
+
+  const hasLoadedSessionRef = useRef(false);
+
+  // Auto-load file from active session
+  useEffect(() => {
+    if (hasLoadedSessionRef.current) return;
+    const active = FileSessionStore.getActiveFile();
+    if (active) {
+      hasLoadedSessionRef.current = true;
+      setTimeout(() => {
+        handleFileSelected([active.file]);
+      }, 0);
+    }
+  }, [handleFileSelected]);
 
   const handleRunOcr = async () => {
     if (!file) return;
@@ -103,7 +133,7 @@ export const OcrPage: React.FC = () => {
             <div>
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{file.name}</h3>
               <p className="text-xs text-slate-500 font-mono mt-0.5">
-                {(file.size / 1024).toFixed(1)} KB • {file.type || 'Document'}
+                {pageCount} page(s) • {(file.size / 1024).toFixed(1)} KB • On-Device OCR
               </p>
             </div>
             <Button
@@ -112,6 +142,7 @@ export const OcrPage: React.FC = () => {
               onClick={() => {
                 setFile(null);
                 setExtractedText('');
+                FileSessionStore.clear();
               }}
             >
               Change File

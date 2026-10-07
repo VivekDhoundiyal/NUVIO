@@ -1,7 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
 
-export type CompressionLevel = 'low' | 'medium' | 'high';
+export type CompressionLevel = 'recommended' | 'high' | 'balanced' | 'low' | 'medium';
 
 export interface CompressionResult {
   pdfBytes: Uint8Array;
@@ -10,6 +10,7 @@ export interface CompressionResult {
   compressedSizeBytes: number;
   savedBytes: number;
   percentageReduced: number;
+  isAlreadyOptimized?: boolean;
 }
 
 export class CompressionEngine {
@@ -18,21 +19,57 @@ export class CompressionEngine {
    */
   static async compressPdf(
     pdfBytes: Uint8Array,
-    levelOrOptions: CompressionLevel | { level?: string; quality?: string } = 'medium',
+    levelOrOptions: CompressionLevel | { level?: string; quality?: string } = 'recommended',
     onProgress?: (percent: number, message: string) => void
   ): Promise<CompressionResult> {
     const originalSizeBytes = pdfBytes.byteLength;
     onProgress?.(5, 'Analyzing PDF document elements...');
 
-    let level: CompressionLevel = 'medium';
-    if (typeof levelOrOptions === 'object' && levelOrOptions !== null) {
-      const lvl = (levelOrOptions as any).level || (levelOrOptions as any).quality;
-      if (lvl === 'high' || lvl === 'maximum') level = 'high';
-      else if (lvl === 'low' || lvl === 'light') level = 'low';
-      else level = 'medium';
-    } else if (typeof levelOrOptions === 'string') {
-      if (levelOrOptions === 'high' || levelOrOptions === 'low') level = levelOrOptions;
-      else level = 'medium';
+    let level: 'recommended' | 'high' | 'balanced' | 'low' = 'recommended';
+    let rawLevel = typeof levelOrOptions === 'object' && levelOrOptions !== null
+      ? (levelOrOptions as any).level || (levelOrOptions as any).quality
+      : levelOrOptions;
+
+    if (rawLevel === 'high' || rawLevel === 'maximum') {
+      level = 'high';
+    } else if (rawLevel === 'balanced') {
+      level = 'balanced';
+    } else if (rawLevel === 'low' || rawLevel === 'light' || rawLevel === 'high-quality') {
+      level = 'low';
+    } else {
+      level = 'recommended';
+    }
+
+    const qualityConfig = {
+      high: { scale: 1.0, quality: 0.50 },        // High Compression (email attachments)
+      balanced: { scale: 1.20, quality: 0.60 },    // Balanced
+      recommended: { scale: 1.35, quality: 0.70 }, // Recommended (optimal clarity/size)
+      low: { scale: 1.80, quality: 0.85 },        // High Quality (preserves maximum clarity)
+    }[level];
+
+    // Try object stream optimization as baseline
+    let objectStreamBytes: Uint8Array | null = null;
+    try {
+      const loadedDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+      objectStreamBytes = await loadedDoc.save({ useObjectStreams: true });
+    } catch {
+      // Continue if non-standard encryption
+    }
+
+    // In non-browser / headless test environments without DOM document
+    if (typeof document === 'undefined') {
+      const optimizedBytes = objectStreamBytes || pdfBytes;
+      const finalBytes = optimizedBytes.byteLength < originalSizeBytes ? optimizedBytes : pdfBytes;
+      const saved = Math.max(0, originalSizeBytes - finalBytes.byteLength);
+      return {
+        pdfBytes: finalBytes,
+        compressedBytes: finalBytes,
+        originalSizeBytes,
+        compressedSizeBytes: finalBytes.byteLength,
+        savedBytes: saved,
+        percentageReduced: Math.round((saved / originalSizeBytes) * 100),
+        isAlreadyOptimized: saved === 0,
+      };
     }
 
     const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0), password: '' });
@@ -40,28 +77,6 @@ export class CompressionEngine {
     const numPages = srcPdfJs.numPages;
 
     const newPdfDoc = await PDFDocument.create();
-
-    const qualityConfig = {
-      high: { scale: 1.0, quality: 0.5 },    // Maximum compression
-      medium: { scale: 1.35, quality: 0.7 }, // Balanced compression
-      low: { scale: 1.8, quality: 0.85 },    // High visual fidelity
-    }[level];
-
-    // In non-browser / headless test environments without DOM document
-    if (typeof document === 'undefined') {
-      const loadedDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-      const optimizedBytes = await loadedDoc.save({ useObjectStreams: true });
-      return {
-        pdfBytes: optimizedBytes,
-        compressedBytes: optimizedBytes,
-        originalSizeBytes,
-        compressedSizeBytes: optimizedBytes.byteLength,
-        savedBytes: Math.max(0, originalSizeBytes - optimizedBytes.byteLength),
-        percentageReduced: Math.round(
-          Math.max(0, (originalSizeBytes - optimizedBytes.byteLength) / originalSizeBytes) * 100
-        ),
-      };
-    }
 
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       const progressPercent = Math.round(10 + (pageNum / numPages) * 75);
@@ -98,21 +113,33 @@ export class CompressionEngine {
     }
 
     onProgress?.(90, 'Packaging optimized PDF binary...');
-    const compressedBytes = await newPdfDoc.save();
-    const compressedSizeBytes = compressedBytes.byteLength;
+    const rasterCompressedBytes = await newPdfDoc.save();
+    
+    // Pick the best compression candidate between raster downsampling and object-stream compaction
+    let finalBytes = rasterCompressedBytes;
+    if (objectStreamBytes && objectStreamBytes.byteLength < finalBytes.byteLength) {
+      finalBytes = objectStreamBytes;
+    }
 
+    // Never inflate: If optimized output is larger than original, preserve original bytes
+    if (finalBytes.byteLength > originalSizeBytes) {
+      finalBytes = objectStreamBytes && objectStreamBytes.byteLength <= originalSizeBytes ? objectStreamBytes : pdfBytes;
+    }
+
+    const compressedSizeBytes = finalBytes.byteLength;
     const savedBytes = Math.max(0, originalSizeBytes - compressedSizeBytes);
     const percentageReduced = Math.round((savedBytes / originalSizeBytes) * 100);
 
     onProgress?.(100, 'Optimization complete!');
 
     return {
-      pdfBytes: compressedBytes,
-      compressedBytes,
+      pdfBytes: finalBytes,
+      compressedBytes: finalBytes,
       originalSizeBytes,
       compressedSizeBytes,
       savedBytes,
       percentageReduced,
+      isAlreadyOptimized: savedBytes === 0,
     };
   }
 }

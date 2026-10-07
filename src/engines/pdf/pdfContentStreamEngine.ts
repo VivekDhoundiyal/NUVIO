@@ -55,24 +55,26 @@ export class PdfContentStreamEngine {
         if (runs.length === 0) continue;
 
         for (const span of modifiedSpans) {
-          // If the span has style changes or was deleted, in-stream patching cannot alter font/color/size.
+          // If the span has style changes, in-stream patching cannot alter font/color/size.
           // Defer to surgical replacement to guarantee complete visual fidelity.
-          const hasStyleOrDeleteChange =
-            span.isDeleted ||
+          const hasStyleChange =
             (span.color && span.originalColor && span.color !== span.originalColor) ||
             (span.fontSize && span.originalFontSize && span.fontSize !== span.originalFontSize) ||
-            (span.fontFamily && span.originalFont && span.fontFamily !== span.originalFont) ||
+            (span.fontFamily && span.originalFontFamily && span.fontFamily !== span.originalFontFamily) ||
             span.underline ||
             span.strikethrough;
 
-          if (hasStyleOrDeleteChange) {
+          if (hasStyleChange) {
             continue;
           }
 
           const modifiedWords = span.words?.filter((w) => w.isModified && w.text !== w.originalText);
+          const origWordCount = (span.originalText || '').trim().split(/\s+/).length;
+          const currWordCount = (span.currentText || '').trim().split(/\s+/).length;
+          const isWordLevel = !span.isDeleted && Boolean(modifiedWords && modifiedWords.length > 0 && origWordCount === currWordCount);
 
-          // Case A: Precision word-level modifications present
-          if (modifiedWords && modifiedWords.length > 0) {
+          // Case A: Precision word-level modifications present and word count invariant
+          if (isWordLevel && modifiedWords) {
             let allWordsPatched = true;
             for (const word of modifiedWords) {
               const matchingRun = this.findMatchingRunForWord(runs, word, sIdx);
@@ -245,9 +247,14 @@ export class PdfContentStreamEngine {
     originalRunText: string,
     span: EditableTextSpan
   ): string {
-    // 1. If individual words were modified
+    const targetText = span.isDeleted ? '' : span.currentText;
+
+    // 1. If individual words were modified and word count matches
     const hasModifiedWord = span.words?.some((w) => w.isModified && w.text !== w.originalText);
-    if (hasModifiedWord && span.words) {
+    const origWords = (span.originalText || '').trim().split(/\s+/);
+    const currWords = (targetText || '').trim().split(/\s+/);
+
+    if (hasModifiedWord && span.words && origWords.length === currWords.length) {
       let result = originalRunText;
       for (const word of span.words) {
         if (word.isModified && word.originalText && word.text !== word.originalText) {
@@ -257,17 +264,17 @@ export class PdfContentStreamEngine {
       return result;
     }
 
-    // 2. If the run matches originalText exactly
+    // 2. Exact match
     if (originalRunText === span.originalText) {
-      return span.currentText;
+      return targetText;
     }
 
-    // 3. If run contains originalText as a substring
+    // 3. Substring match
     if (originalRunText.includes(span.originalText)) {
-      return originalRunText.replace(span.originalText, span.currentText);
+      return originalRunText.replace(span.originalText, targetText);
     }
 
-    // 4. Default: return span.currentText
-    return span.currentText;
+    // 4. Default: return targetText
+    return targetText;
   }
 }

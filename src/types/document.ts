@@ -104,6 +104,7 @@ export interface PDFTextElement {
 
   // Compatibility fields for UI rendering and toolbar
   fontFamily?: string;
+  originalFontFamily?: string;
   color?: string;
   originalColor?: string;
   pdfFontName?: string;

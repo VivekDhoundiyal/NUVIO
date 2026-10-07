@@ -98,7 +98,7 @@ export class AnnotationBurner {
         const { height: pageHeight } = page.getSize();
 
         for (const span of spans) {
-          if (!span.isModified) continue;
+          if (!span.isModified && !span.isDeleted) continue;
           if (patchedSpanIds.has(span.id)) continue;
 
           const pdfX = span.pdfX !== undefined ? span.pdfX : span.x;
@@ -115,7 +115,7 @@ export class AnnotationBurner {
 
           const rawLines = (span.currentText || '').split('\n');
           const lineCount = Math.max(1, rawLines.length);
-          const lineHeight = span.lineHeight ? span.lineHeight * size : size * 1.25;
+          const lineHeight = span.lineHeight ? (span.lineHeight > 3 ? span.lineHeight : span.lineHeight * size) : size * 1.25;
 
           // Localized mask: cover ONLY the exact original text bounds.
           // Bottom of descenders is baseline - (fontSize * 0.3).

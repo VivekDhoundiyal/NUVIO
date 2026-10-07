@@ -36,31 +36,136 @@ export interface EditorCanvasProps {
   onRunOcrOnPage: (pageIndex: number) => void;
 }
 
-// Memoized PDF page background canvas to completely isolate PDF.js rendering from React state changes
+// Memoized PDF page background canvas to isolate PDF.js rendering and perform localized canvas-level erasure
 interface PdfPageCanvasProps {
   pdfJsDoc: pdfjsLib.PDFDocumentProxy | null;
   pageNumber: number;
   zoom: number;
   rotation: number;
+  pageWidth: number;
+  pageHeight: number;
+  modifiedSpans?: EditableTextSpan[];
 }
 
-const PdfPageCanvas = React.memo<PdfPageCanvasProps>(({ pdfJsDoc, pageNumber, zoom, rotation }) => {
+const PdfPageCanvas = React.memo<PdfPageCanvasProps>(({
+  pdfJsDoc,
+  pageNumber,
+  zoom,
+  rotation,
+  pageWidth,
+  pageHeight,
+  modifiedSpans = [],
+}) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const prevModifiedIdsRef = useRef<string>('');
 
+  // Erasure function: draws background-colored rectangles directly onto the canvas bitmap
+  // to permanently eliminate the original rasterized PDF glyphs for any modified or deleted spans.
+  const eraseSpans = useCallback(
+    (canvas: HTMLCanvasElement, spansToErase: EditableTextSpan[]) => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const activeToErase = spansToErase.filter((s) => s.isModified || s.isDeleted);
+      if (activeToErase.length === 0) return;
+
+      const pixelRatio = window.devicePixelRatio || 1;
+      ctx.save();
+      ctx.scale(pixelRatio, pixelRatio);
+
+      for (const span of activeToErase) {
+        let sx = span.x * zoom;
+        let sy = span.y * zoom;
+        let sw = Math.max(span.width * zoom, 20);
+        let sh = Math.max(span.height * zoom, span.fontSize * zoom);
+
+        if (rotation && rotation % 360 !== 0 && span.pdfX !== undefined && span.pdfY !== undefined) {
+          const rect = PdfCoordinateSystem.pdfToViewport(
+            span.pdfX,
+            span.pdfY,
+            span.width,
+            span.height || span.fontSize,
+            { width: pageWidth, height: pageHeight, rotation },
+            zoom
+          );
+          sx = rect.x;
+          sy = rect.y;
+          sw = Math.max(rect.width, 20);
+          sh = Math.max(rect.height, span.fontSize * zoom);
+        }
+
+        ctx.fillStyle =
+          span.backgroundColor && span.backgroundColor !== 'transparent'
+            ? span.backgroundColor
+            : '#ffffff';
+
+        // 2px margin ensures anti-aliasing edges of the original rasterized PDF glyphs are completely eliminated
+        ctx.fillRect(Math.max(0, sx - 2), Math.max(0, sy - 2), sw + 4, sh + 4);
+      }
+
+      ctx.restore();
+    },
+    [zoom, rotation, pageWidth, pageHeight]
+  );
+
+  // Render base PDF page via PDF.js, then apply erasure masks
   useEffect(() => {
     if (!pdfJsDoc || !canvasRef.current) return;
     let isCancelled = false;
 
-    PdfEngine.renderPageToCanvas(pdfJsDoc, pageNumber, canvasRef.current, zoom, rotation).catch((err) => {
-      if (!isCancelled && err?.name !== 'RenderingCancelledException' && !err?.message?.includes('cancelled')) {
-        console.error(`Error rendering page ${pageNumber}:`, err);
-      }
-    });
+    PdfEngine.renderPageToCanvas(pdfJsDoc, pageNumber, canvasRef.current, zoom, rotation)
+      .then(() => {
+        if (!isCancelled && canvasRef.current) {
+          eraseSpans(canvasRef.current, modifiedSpans);
+        }
+      })
+      .catch((err) => {
+        if (!isCancelled && err?.name !== 'RenderingCancelledException' && !err?.message?.includes('cancelled')) {
+          console.error(`Error rendering page ${pageNumber}:`, err);
+        }
+      });
 
     return () => {
       isCancelled = true;
     };
-  }, [pdfJsDoc, pageNumber, zoom, rotation]);
+  }, [pdfJsDoc, pageNumber, zoom, rotation, eraseSpans]);
+
+  // Live erasure effect when modifiedSpans change
+  useEffect(() => {
+    if (!canvasRef.current || !pdfJsDoc) return;
+
+    const currentModifiedSpans = modifiedSpans.filter((s) => s.isModified || s.isDeleted);
+    const currentKey = currentModifiedSpans.map((s) => `${s.id}-${s.isDeleted ? 'del' : 'mod'}`).join(',');
+
+    // If spans were un-modified or restored (e.g. undo/reset), re-render PDF.js base layer to restore pixels
+    const prevKey = prevModifiedIdsRef.current;
+    prevModifiedIdsRef.current = currentKey;
+
+    if (prevKey && prevKey !== currentKey) {
+      const prevIds = new Set(prevKey.split(',').filter(Boolean));
+      const currentIds = new Set(currentKey.split(',').filter(Boolean));
+      let hadRemoval = false;
+      for (const id of prevIds) {
+        if (!currentIds.has(id)) {
+          hadRemoval = true;
+          break;
+        }
+      }
+      if (hadRemoval) {
+        PdfEngine.renderPageToCanvas(pdfJsDoc, pageNumber, canvasRef.current, zoom, rotation)
+          .then(() => {
+            if (canvasRef.current) {
+              eraseSpans(canvasRef.current, modifiedSpans);
+            }
+          })
+          .catch(() => {});
+        return;
+      }
+    }
+
+    // Fast path: simply paint erasure masks onto the existing canvas
+    eraseSpans(canvasRef.current, modifiedSpans);
+  }, [modifiedSpans, eraseSpans, pdfJsDoc, pageNumber, zoom, rotation]);
 
   return <canvas ref={canvasRef} className="block pointer-events-none" />;
 });
@@ -623,12 +728,15 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
               onMouseMove={(e) => handlePageMouseMove(e, page.pageIndex)}
               onMouseUp={() => handlePageMouseUp(page.pageIndex, page)}
             >
-              {/* PDF Background Canvas (Isolated & Memoized) */}
+              {/* PDF Background Canvas (Isolated & Memoized with Localized Erasure) */}
               <PdfPageCanvas
                 pdfJsDoc={pdfJsDoc}
                 pageNumber={page.pageIndex + 1}
                 zoom={zoom}
                 rotation={page.rotation || 0}
+                pageWidth={page.width}
+                pageHeight={page.height}
+                modifiedSpans={pageSpans}
               />
 
               {/* Freehand Drawing SVG Preview (Throttled with RAF) */}
@@ -690,156 +798,14 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                     );
                   }
 
-                  // If span has tokenized words, render word-level micro-editor & transparent hit targets
-                  if (span.words && span.words.length > 0) {
-                    return span.words.map((word) => {
-                      const isEditingWord = editingWordId === word.id;
-                      let wordLeft = word.x * zoom;
-                      let wordTop = word.y * zoom;
-                      let wordWidth = Math.max(word.width * zoom, 10);
-                      let wordHeight = Math.max(word.height * zoom, word.fontSize * zoom);
-
-                      if (page.rotation && page.rotation % 360 !== 0 && word.pdfX !== undefined && word.pdfY !== undefined) {
-                        const rect = PdfCoordinateSystem.pdfToViewport(
-                          word.pdfX,
-                          word.pdfY,
-                          word.width,
-                          word.height || word.fontSize,
-                          { width: page.width, height: page.height, rotation: page.rotation },
-                          zoom
-                        );
-                        wordLeft = rect.x;
-                        wordTop = rect.y;
-                        wordWidth = Math.max(rect.width, 10);
-                        wordHeight = Math.max(rect.height, word.fontSize * zoom);
-                      }
-
-                      if (isEditingWord) {
-                        return (
-                          <div
-                            key={word.id}
-                            className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1"
-                            style={{
-                              left: wordLeft - 1,
-                              top: wordTop - 1,
-                              width: Math.max(wordWidth + 8, 20),
-                              height: Math.max(wordHeight + 2, 16),
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <input
-                              autoFocus
-                              type="text"
-                              value={editingWordValue}
-                              onChange={(e) => handleWordChange(e.target.value, span, word)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  commitWordEdit(span, word);
-                                } else if (e.key === 'Escape') {
-                                  e.preventDefault();
-                                  cancelWordEdit(span, word);
-                                }
-                              }}
-                              onBlur={() => commitWordEdit(span, word)}
-                              style={{
-                                fontSize: `${word.fontSize * zoom}px`,
-                                color: word.color,
-                                fontFamily: word.fontFamily,
-                                fontWeight: word.fontWeight,
-                                fontStyle: word.fontStyle,
-                              }}
-                              className="w-full h-full bg-transparent outline-none border-none p-0 leading-none font-sans"
-                            />
-                          </div>
-                        );
-                      }
-
-                      if (word.isModified) {
-                        return (
-                          <div
-                            key={word.id}
-                            onClick={(e) => handleWordClick(e, span, word)}
-                            title={
-                              isFormatPainterActive
-                                ? `Apply formatting to "${word.text}"`
-                                : `Edited word: "${word.text}" (Click to edit)`
-                            }
-                            className={`absolute pointer-events-auto cursor-text z-20 group rounded-xs transition-shadow ${
-                              selectedSpanId === span.id
-                                ? 'ring-2 ring-brand-500 shadow-xs'
-                                : isFormatPainterActive
-                                ? 'hover:ring-2 hover:ring-brand-500 cursor-crosshair'
-                                : 'hover:ring-1 hover:ring-brand-400'
-                            }`}
-                            style={{
-                              left: wordLeft,
-                              top: wordTop,
-                              minWidth: wordWidth,
-                              height: wordHeight,
-                              fontSize: `${word.fontSize * zoom}px`,
-                              color: word.color,
-                              fontFamily: word.fontFamily,
-                              fontWeight: word.fontWeight,
-                              fontStyle: word.fontStyle,
-                              backgroundColor: span.backgroundColor || '#ffffff',
-                              whiteSpace: 'nowrap',
-                              lineHeight: `${wordHeight}px`,
-                            }}
-                          >
-                            {word.text}
-                          </div>
-                        );
-                      }
-
-                      // Untouched word: transparent hit area, untouched base PDF canvas shows through 100%!
-                      return (
-                        <div
-                          key={word.id}
-                          onClick={(e) => handleWordClick(e, span, word)}
-                          title={
-                            isFormatPainterActive
-                              ? `Apply formatting to "${word.originalText}"`
-                              : toolMode === 'highlight'
-                              ? `Highlight "${word.originalText}"`
-                              : toolMode === 'underline'
-                              ? `Underline "${word.originalText}"`
-                              : toolMode === 'strikethrough'
-                              ? `Strikethrough "${word.originalText}"`
-                              : `Click to edit: "${word.originalText}"`
-                          }
-                          className={`absolute pointer-events-auto cursor-text rounded-xs transition-colors ${
-                            selectedSpanId === span.id
-                              ? 'ring-1 ring-brand-500/70 bg-brand-500/10'
-                              : isFormatPainterActive
-                              ? 'hover:bg-brand-500/25 hover:ring-2 hover:ring-brand-500 cursor-crosshair'
-                              : toolMode === 'highlight'
-                              ? 'hover:bg-yellow-400/30 hover:ring-1 hover:ring-yellow-500'
-                              : toolMode === 'underline'
-                              ? 'hover:bg-blue-400/20 hover:border-b-2 hover:border-blue-600'
-                              : toolMode === 'strikethrough'
-                              ? 'hover:bg-red-400/20 hover:ring-1 hover:ring-red-500'
-                              : 'hover:bg-brand-500/10 hover:ring-1 hover:ring-brand-400/50'
-                          }`}
-                          style={{
-                            left: wordLeft,
-                            top: wordTop,
-                            width: wordWidth,
-                            height: wordHeight,
-                          }}
-                        />
-                      );
-                    });
-                  }
-
-                  // Fallback: span-level rendering if words are not tokenized
-                  const isEditing = editingSpanId === span.id;
-
-                  if (isEditing) {
+                  // 2. Actively editing entire span
+                  const isEditingSpan = editingSpanId === span.id && !editingWordId;
+                  if (isEditingSpan) {
                     const lines = (editingTextValue || '').split('\n');
                     const isMultiLine = lines.length > 1;
 
                     if (!isMultiLine) {
+                      const dynamicInputWidth = Math.max(spanWidth + 12, (editingTextValue.length + 3) * (span.fontSize || 12) * zoom * 0.65);
                       return (
                         <div
                           key={span.id}
@@ -847,7 +813,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                           style={{
                             left: spanLeft - 1,
                             top: spanTop - 1,
-                            width: Math.max(spanWidth + 8, 24),
+                            minWidth: Math.max(spanWidth + 8, 24),
+                            width: `${dynamicInputWidth}px`,
                             height: Math.max(spanHeight + 2, 18),
                           }}
                           onClick={(e) => e.stopPropagation()}
@@ -893,7 +860,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                         style={{
                           left: spanLeft,
                           top: spanTop,
-                          width: Math.max(spanWidth + 4, 30),
+                          minWidth: Math.max(spanWidth + 8, 30),
+                          width: `${Math.max(spanWidth + 16, 60)}px`,
                           height: editorHeight + 4,
                         }}
                         onClick={(e) => e.stopPropagation()}
@@ -938,7 +906,119 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                     );
                   }
 
-                  // If modified, render clean replacement text on top with localized mask
+                  // 3. Actively editing a specific word in this span
+                  const isEditingWordInThisSpan = Boolean(editingWordId && span.words && span.words.some((w) => w.id === editingWordId));
+                  if (isEditingWordInThisSpan && span.words) {
+                    return span.words.map((word) => {
+                      const isEditingWord = editingWordId === word.id;
+                      let wordLeft = word.x * zoom;
+                      let wordTop = word.y * zoom;
+                      let wordWidth = Math.max(word.width * zoom, 10);
+                      let wordHeight = Math.max(word.height * zoom, word.fontSize * zoom);
+
+                      if (page.rotation && page.rotation % 360 !== 0 && word.pdfX !== undefined && word.pdfY !== undefined) {
+                        const rect = PdfCoordinateSystem.pdfToViewport(
+                          word.pdfX,
+                          word.pdfY,
+                          word.width,
+                          word.height || word.fontSize,
+                          { width: page.width, height: page.height, rotation: page.rotation },
+                          zoom
+                        );
+                        wordLeft = rect.x;
+                        wordTop = rect.y;
+                        wordWidth = Math.max(rect.width, 10);
+                        wordHeight = Math.max(rect.height, word.fontSize * zoom);
+                      }
+
+                      if (isEditingWord) {
+                        const dynamicInputWidth = Math.max(wordWidth + 12, (editingWordValue.length + 2) * (word.fontSize || 12) * zoom * 0.65);
+                        return (
+                          <div
+                            key={word.id}
+                            className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1"
+                            style={{
+                              left: wordLeft - 1,
+                              top: wordTop - 1,
+                              minWidth: Math.max(wordWidth + 8, 20),
+                              width: `${dynamicInputWidth}px`,
+                              height: Math.max(wordHeight + 2, 16),
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editingWordValue}
+                              onChange={(e) => handleWordChange(e.target.value, span, word)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  commitWordEdit(span, word);
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  cancelWordEdit(span, word);
+                                }
+                              }}
+                              onBlur={() => commitWordEdit(span, word)}
+                              style={{
+                                fontSize: `${word.fontSize * zoom}px`,
+                                color: word.color,
+                                fontFamily: word.fontFamily,
+                                fontWeight: word.fontWeight,
+                                fontStyle: word.fontStyle,
+                              }}
+                              className="w-full h-full bg-transparent outline-none border-none p-0 leading-none font-sans"
+                            />
+                          </div>
+                        );
+                      }
+
+                      if (word.isModified) {
+                        return (
+                          <div
+                            key={word.id}
+                            onClick={(e) => handleWordClick(e, span, word)}
+                            className="absolute pointer-events-auto cursor-text z-20 group rounded-xs"
+                            style={{
+                              left: wordLeft,
+                              top: wordTop,
+                              minWidth: wordWidth,
+                              height: wordHeight,
+                              fontSize: `${word.fontSize * zoom}px`,
+                              color: word.color,
+                              fontFamily: word.fontFamily,
+                              fontWeight: word.fontWeight,
+                              fontStyle: word.fontStyle,
+                              backgroundColor: span.backgroundColor || '#ffffff',
+                              whiteSpace: 'nowrap',
+                              lineHeight: `${wordHeight}px`,
+                            }}
+                          >
+                            {word.text}
+                          </div>
+                        );
+                      }
+
+                      // Untouched word: transparent hit area
+                      return (
+                        <div
+                          key={word.id}
+                          onClick={(e) => handleWordClick(e, span, word)}
+                          className="absolute pointer-events-auto cursor-text rounded-xs hover:bg-brand-500/10"
+                          style={{
+                            left: wordLeft,
+                            top: wordTop,
+                            width: wordWidth,
+                            height: wordHeight,
+                          }}
+                        />
+                      );
+                    });
+                  }
+
+                  // 4. Unified replacement for ANY modified span (committed or edited)
+                  // Covers the original text with 100% fidelity, auto-expands to prevent clipping, and eliminates double impressions
                   if (span.isModified) {
                     const isSelected = selectedSpanId === span.id;
                     const lines = (span.currentText || '').split('\n');
@@ -950,6 +1030,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                       <div
                         key={span.id}
                         onClick={(e) => handleSpanClick(e, span)}
+                        onDoubleClick={(e) => handleSpanClick(e, span)}
                         title={
                           isFormatPainterActive
                             ? `Apply formatting to "${span.currentText}"`
@@ -965,7 +1046,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                         style={{
                           left: spanLeft,
                           top: spanTop + (span.verticalAlign === 'super' ? -span.fontSize * zoom * 0.35 : span.verticalAlign === 'sub' ? span.fontSize * zoom * 0.2 : 0),
-                          minWidth: spanWidth,
+                          minWidth: spanWidth + 2,
+                          width: 'fit-content',
                           height: displayHeight,
                           fontSize: `${(span.verticalAlign === 'super' || span.verticalAlign === 'sub' ? Math.max(6, span.fontSize * 0.7) : span.fontSize) * zoom}px`,
                           color: span.color,
@@ -981,10 +1063,12 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                             ? 'underline'
                             : undefined,
                           textAlign: span.textAlign || 'left',
-                          lineHeight: `${effectiveLineHeight}px`,
+                          lineHeight: lineCount > 1 ? `${effectiveLineHeight}px` : `${spanHeight}px`,
                           backgroundColor: span.backgroundColor || '#ffffff',
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
+                          whiteSpace: lineCount > 1 ? 'pre-wrap' : 'nowrap',
+                          wordBreak: lineCount > 1 ? 'break-word' : 'normal',
+                          display: lineCount > 1 ? 'block' : 'flex',
+                          alignItems: 'center',
                         }}
                       >
                         {span.currentText}
@@ -992,7 +1076,70 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                     );
                   }
 
-                  // Normal original text
+                  // 5. Untouched span: word-level micro-hit targets (transparent hit boxes so original PDF canvas shines through 100%)
+                  if (span.words && span.words.length > 0) {
+                    return span.words.map((word) => {
+                      let wordLeft = word.x * zoom;
+                      let wordTop = word.y * zoom;
+                      let wordWidth = Math.max(word.width * zoom, 10);
+                      let wordHeight = Math.max(word.height * zoom, word.fontSize * zoom);
+
+                      if (page.rotation && page.rotation % 360 !== 0 && word.pdfX !== undefined && word.pdfY !== undefined) {
+                        const rect = PdfCoordinateSystem.pdfToViewport(
+                          word.pdfX,
+                          word.pdfY,
+                          word.width,
+                          word.height || word.fontSize,
+                          { width: page.width, height: page.height, rotation: page.rotation },
+                          zoom
+                        );
+                        wordLeft = rect.x;
+                        wordTop = rect.y;
+                        wordWidth = Math.max(rect.width, 10);
+                        wordHeight = Math.max(rect.height, word.fontSize * zoom);
+                      }
+
+                      return (
+                        <div
+                          key={word.id}
+                          onClick={(e) => handleWordClick(e, span, word)}
+                          onDoubleClick={(e) => handleSpanClick(e, span)}
+                          title={
+                            isFormatPainterActive
+                              ? `Apply formatting to "${word.originalText}"`
+                              : toolMode === 'highlight'
+                              ? `Highlight "${word.originalText}"`
+                              : toolMode === 'underline'
+                              ? `Underline "${word.originalText}"`
+                              : toolMode === 'strikethrough'
+                              ? `Strikethrough "${word.originalText}"`
+                              : `Click to edit: "${word.originalText}"`
+                          }
+                          className={`absolute pointer-events-auto cursor-text rounded-xs transition-colors ${
+                            selectedSpanId === span.id
+                              ? 'ring-1 ring-brand-500/70 bg-brand-500/10'
+                              : isFormatPainterActive
+                              ? 'hover:bg-brand-500/25 hover:ring-2 hover:ring-brand-500 cursor-crosshair'
+                              : toolMode === 'highlight'
+                              ? 'hover:bg-yellow-400/30 hover:ring-1 hover:ring-yellow-500'
+                              : toolMode === 'underline'
+                              ? 'hover:bg-blue-400/20 hover:border-b-2 hover:border-blue-600'
+                              : toolMode === 'strikethrough'
+                              ? 'hover:bg-red-400/20 hover:ring-1 hover:ring-red-500'
+                              : 'hover:bg-brand-500/10 hover:ring-1 hover:ring-brand-400/50'
+                          }`}
+                          style={{
+                            left: wordLeft,
+                            top: wordTop,
+                            width: wordWidth,
+                            height: wordHeight,
+                          }}
+                        />
+                      );
+                    });
+                  }
+
+                  // 6. Untouched fallback: span without tokenized words
                   const isSelected = selectedSpanId === span.id;
                   return (
                     <div

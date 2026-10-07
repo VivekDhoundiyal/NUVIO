@@ -340,6 +340,7 @@ export class PdfEngine {
         fontSize: Math.round(fontSize),
         originalFontSize: fontSize,
         fontFamily: detectedFamily,
+        originalFontFamily: detectedFamily,
         pdfFontName,
         fontWeight: isBold ? 'bold' : 'normal',
         fontStyle: isItalic ? 'italic' : 'normal',

@@ -58,6 +58,17 @@ const WIN_ANSI_MAP: Record<number, string> = {
   254: 'þ', 255: 'ÿ',
 };
 
+const UNICODE_TO_WIN_ANSI: Record<string, number> = {};
+for (let c = 32; c <= 126; c++) {
+  UNICODE_TO_WIN_ANSI[String.fromCharCode(c)] = c;
+}
+for (const [codeStr, char] of Object.entries(WIN_ANSI_MAP)) {
+  const code = Number(codeStr);
+  if (UNICODE_TO_WIN_ANSI[char] === undefined) {
+    UNICODE_TO_WIN_ANSI[char] = code;
+  }
+}
+
 export class PdfFontResolver {
   public static decodeWinAnsiCode(code: number): string {
     return WIN_ANSI_MAP[code] || String.fromCharCode(code);
@@ -289,6 +300,13 @@ export class PdfFontResolver {
     if (meta && meta.unicodeToCodeMap.has(char)) {
       return true;
     }
+    if (meta?.isSubset) {
+      // In a subset font, only glyphs present in unicodeToCodeMap exist in the embedded font
+      return false;
+    }
+    if (UNICODE_TO_WIN_ANSI[char] !== undefined) {
+      return true;
+    }
     const asciiCode = char.charCodeAt(0);
     return asciiCode >= 32 && asciiCode <= 126;
   }
@@ -300,6 +318,12 @@ export class PdfFontResolver {
     const meta = this.fontCache.get(fontResource);
     if (meta && meta.unicodeToCodeMap.has(char)) {
       return meta.unicodeToCodeMap.get(char)!;
+    }
+    if (meta?.isSubset) {
+      return null;
+    }
+    if (UNICODE_TO_WIN_ANSI[char] !== undefined) {
+      return UNICODE_TO_WIN_ANSI[char];
     }
     const asciiCode = char.charCodeAt(0);
     if (asciiCode >= 32 && asciiCode <= 126) {

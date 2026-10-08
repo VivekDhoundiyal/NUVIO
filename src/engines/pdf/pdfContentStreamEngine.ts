@@ -90,8 +90,20 @@ export class PdfContentStreamEngine {
                 continue;
               }
 
-              const diff = PdfTextEditEngine.computeDiffRange(runText, newRunText);
+              const wordIdx = runText.indexOf(word.originalText);
+              const diff =
+                wordIdx !== -1
+                  ? { prefixLen: wordIdx, origChangeLen: word.originalText.length, replChangeText: word.text }
+                  : PdfTextEditEngine.computeDiffRange(runText, newRunText);
               if (diff.origChangeLen === 0 && diff.replChangeText === '') continue;
+
+              const canEncode = Array.from(diff.replChangeText).every((ch) =>
+                fontResolver.hasGlyph(matchingRun.fontResource, ch)
+              );
+              if (!canEncode) {
+                allWordsPatched = false;
+                continue;
+              }
 
               const patch = PdfTextEditEngine.computeGlyphPatch(
                 matchingRun,
@@ -114,8 +126,18 @@ export class PdfContentStreamEngine {
             const newRunText = this.computeReplacementText(runText, span);
             if (newRunText === runText) continue;
 
-            const diff = PdfTextEditEngine.computeDiffRange(runText, newRunText);
+            const isFullRunMatch = runText.trim() === (span.originalText || '').trim();
+            const diff = isFullRunMatch
+              ? { prefixLen: 0, origChangeLen: runText.length, replChangeText: newRunText }
+              : PdfTextEditEngine.computeDiffRange(runText, newRunText);
             if (diff.origChangeLen === 0 && diff.replChangeText === '') continue;
+
+            const canEncode = Array.from(diff.replChangeText).every((ch) =>
+              fontResolver.hasGlyph(matchingRun.fontResource, ch)
+            );
+            if (!canEncode) {
+              continue; // Defer to surgical replacement with full embedded standard font
+            }
 
             const patch = PdfTextEditEngine.computeGlyphPatch(
               matchingRun,

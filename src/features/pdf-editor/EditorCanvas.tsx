@@ -37,6 +37,28 @@ export interface EditorCanvasProps {
   onRunOcrOnPage: (pageIndex: number) => void;
 }
 
+let measurementCanvas: HTMLCanvasElement | null = null;
+let measurementCtx: CanvasRenderingContext2D | null = null;
+
+export function measureTextWidth(text: string, fontSpec: string): number {
+  if (typeof document === 'undefined') {
+    return text.length * 8;
+  }
+  if (!measurementCanvas) {
+    measurementCanvas = document.createElement('canvas');
+    measurementCtx = measurementCanvas.getContext('2d');
+  }
+  if (!measurementCtx) {
+    return text.length * 8;
+  }
+  try {
+    measurementCtx.font = fontSpec;
+    return measurementCtx.measureText(text).width;
+  } catch {
+    return text.length * 8;
+  }
+}
+
 // Pure PDF.js vector canvas renderer - authoritative visual source of truth
 interface PdfPageCanvasProps {
   pdfJsDoc: pdfjsLib.PDFDocumentProxy | null;
@@ -698,18 +720,22 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                     const lines = (editingTextValue || '').split('\n');
                     const isMultiLine = lines.length > 1;
 
+                    const fontSpec = `${span.fontStyle === 'italic' ? 'italic ' : ''}${span.fontWeight === 'bold' ? 'bold ' : ''}${Math.round((span.fontSize || 12) * zoom)}px ${span.fontFamily || 'Helvetica, Arial, sans-serif'}`;
+
                     if (!isMultiLine) {
-                      const dynamicInputWidth = Math.max(spanWidth + 12, (editingTextValue.length + 3) * (span.fontSize || 12) * zoom * 0.65);
+                      const measuredWidth = measureTextWidth(editingTextValue || '', fontSpec);
+                      const dynamicInputWidth = Math.max(spanWidth + 16, Math.ceil(measuredWidth + 28));
                       return (
                         <div
                           key={span.id}
-                          className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1"
+                          className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1.5"
                           style={{
                             left: spanLeft - 1,
                             top: spanTop - 1,
-                            minWidth: Math.max(spanWidth + 8, 24),
+                            minWidth: Math.max(spanWidth + 12, 32),
                             width: `${dynamicInputWidth}px`,
-                            height: Math.max(spanHeight + 2, 18),
+                            height: Math.max(spanHeight + 4, 20),
+                            boxSizing: 'border-box',
                           }}
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -729,34 +755,38 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                             }}
                             onBlur={() => commitSpanEdit(span, page.height)}
                             style={{
-                              fontSize: `${(span.verticalAlign === 'super' || span.verticalAlign === 'sub' ? Math.max(6, span.fontSize * 0.7) : span.fontSize) * zoom}px`,
+                              fontSize: `${(span.verticalAlign === 'super' || span.verticalAlign === 'sub' ? Math.max(6, Math.round(span.fontSize * 0.7)) : Math.round(span.fontSize || 12)) * zoom}px`,
                               color: span.color,
-                              fontFamily: span.fontFamily,
+                              fontFamily: span.fontFamily || 'Helvetica, Arial, sans-serif',
                               fontWeight: span.fontWeight,
                               fontStyle: span.fontStyle,
                               textAlign: span.textAlign || 'left',
                               letterSpacing: span.letterSpacing ? `${span.letterSpacing * zoom}px` : undefined,
+                              boxSizing: 'border-box',
                             }}
-                            className="w-full h-full bg-transparent outline-none border-none p-0 leading-none font-sans"
+                            className="w-full h-full bg-transparent outline-none border-none p-0 leading-none"
                           />
                         </div>
                       );
                     }
 
                     const lineCount = lines.length;
-                    const effectiveLineHeight = (span.lineHeight || 1.25) * span.fontSize * zoom;
+                    const effectiveLineHeight = (span.lineHeight || 1.25) * (span.fontSize || 12) * zoom;
                     const editorHeight = Math.max(spanHeight, lineCount * effectiveLineHeight);
+                    const maxLineWidth = Math.max(...lines.map((l) => measureTextWidth(l, fontSpec)));
+                    const dynamicAreaWidth = Math.max(spanWidth + 24, Math.ceil(maxLineWidth + 32));
 
                     return (
                       <div
                         key={span.id}
-                        className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs"
+                        className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs p-1"
                         style={{
                           left: spanLeft,
                           top: spanTop,
-                          minWidth: Math.max(spanWidth + 8, 30),
-                          width: `${Math.max(spanWidth + 16, 60)}px`,
-                          height: editorHeight + 4,
+                          minWidth: Math.max(spanWidth + 16, 40),
+                          width: `${dynamicAreaWidth}px`,
+                          height: editorHeight + 6,
+                          boxSizing: 'border-box',
                         }}
                         onClick={(e) => e.stopPropagation()}
                       >
@@ -776,9 +806,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                           }}
                           onBlur={() => commitSpanEdit(span, page.height)}
                           style={{
-                            fontSize: `${(span.verticalAlign === 'super' || span.verticalAlign === 'sub' ? Math.max(6, span.fontSize * 0.7) : span.fontSize) * zoom}px`,
+                            fontSize: `${(span.verticalAlign === 'super' || span.verticalAlign === 'sub' ? Math.max(6, Math.round(span.fontSize * 0.7)) : Math.round(span.fontSize || 12)) * zoom}px`,
                             color: span.color,
-                            fontFamily: span.fontFamily,
+                            fontFamily: span.fontFamily || 'Helvetica, Arial, sans-serif',
                             fontWeight: span.fontWeight,
                             fontStyle: span.fontStyle,
                             textAlign: span.textAlign || 'left',
@@ -793,8 +823,9 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                               ? 'underline'
                               : undefined,
                             resize: 'none',
+                            boxSizing: 'border-box',
                           }}
-                          className="w-full h-full p-1 bg-transparent outline-none border-none leading-normal font-sans"
+                          className="w-full h-full p-0.5 bg-transparent outline-none border-none leading-normal"
                         />
                       </div>
                     );
@@ -826,17 +857,20 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                       }
 
                       if (isEditingWord) {
-                        const dynamicInputWidth = Math.max(wordWidth + 10, (editingWordValue.length + 1) * (word.fontSize || 12) * zoom * 0.65);
+                        const fontSpec = `${word.fontStyle === 'italic' ? 'italic ' : ''}${word.fontWeight === 'bold' ? 'bold ' : ''}${Math.round((word.fontSize || 12) * zoom)}px ${word.fontFamily || 'Helvetica, Arial, sans-serif'}`;
+                        const measuredWidth = measureTextWidth(editingWordValue || '', fontSpec);
+                        const dynamicInputWidth = Math.max(wordWidth + 16, Math.ceil(measuredWidth + 28));
                         return (
                           <div
                             key={word.id}
-                            className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1"
+                            className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1.5"
                             style={{
                               left: wordLeft - 1,
                               top: wordTop - 1,
-                              minWidth: Math.max(wordWidth + 8, 20),
+                              minWidth: Math.max(wordWidth + 12, 32),
                               width: `${dynamicInputWidth}px`,
-                              height: Math.max(wordHeight + 2, 16),
+                              height: Math.max(wordHeight + 4, 20),
+                              boxSizing: 'border-box',
                             }}
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -856,13 +890,14 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                               }}
                               onBlur={() => commitWordEdit(span, word)}
                               style={{
-                                fontSize: `${word.fontSize * zoom}px`,
-                                color: word.color,
-                                fontFamily: word.fontFamily,
-                                fontWeight: word.fontWeight,
-                                fontStyle: word.fontStyle,
+                                fontSize: `${Math.round((word.fontSize || 12) * zoom)}px`,
+                                color: word.color || '#000000',
+                                fontFamily: word.fontFamily || 'Helvetica, Arial, sans-serif',
+                                fontWeight: word.fontWeight || 'normal',
+                                fontStyle: word.fontStyle || 'normal',
+                                boxSizing: 'border-box',
                               }}
-                              className="w-full h-full bg-transparent outline-none border-none p-0 leading-none font-sans"
+                              className="w-full h-full bg-transparent outline-none border-none p-0 leading-none"
                             />
                           </div>
                         );
@@ -1103,7 +1138,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                           backgroundColor: obj.backgroundColor && obj.backgroundColor !== 'transparent' ? obj.backgroundColor : '#ffffff',
                           resize: 'none',
                         }}
-                        className="w-full h-full p-1 outline-none border border-brand-500 rounded-xs ring-1 ring-brand-500 font-sans"
+                        className="w-full h-full p-1 outline-none border border-brand-500 rounded-xs ring-1 ring-brand-500"
                       />
                     ) : (
                       <div
@@ -1111,7 +1146,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                           e.stopPropagation();
                           setEditingAnnotationId(obj.id);
                         }}
-                        className="w-full h-full flex items-center px-1 overflow-hidden break-words select-none cursor-text"
+                        className="w-full h-full flex items-center px-1 overflow-visible break-words whitespace-pre-wrap select-none cursor-text"
                         style={{
                           fontSize: `${(obj.verticalAlign === 'super' || obj.verticalAlign === 'sub' ? Math.max(6, (obj.fontSize || 14) * 0.7) : (obj.fontSize || 14)) * zoom}px`,
                           color: obj.textColor || '#0f172a',

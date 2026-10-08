@@ -69,23 +69,56 @@ export class PdfTextEditEngine {
     const suffixHex = this.glyphsToHex(suffixGlyphs, isCID);
 
     let patchedOperatorText = '';
+    const hasSuffix = suffixGlyphs.length > 0;
+    const shouldCompensate = hasSuffix && Math.abs(deltaWidth) > 0.05;
+    const kernAdjustment = shouldCompensate
+      ? Math.round((deltaWidth / (run.fontSize * hScale)) * 1000)
+      : 0;
 
     if (run.operator === 'Tj' || run.operator === "'" || run.operator === '"') {
-      const opName = run.operator;
-      // Contiguous string replacement preserving normal typographic text flow
-      if (run.isHexString) {
-        const fullHex = prefixHex + replacementHex + suffixHex;
-        patchedOperatorText = `<${fullHex}> ${opName}`;
+      if (shouldCompensate) {
+        // Convert to TJ with kerning compensation so suffix text never reflows or shifts
+        if (run.isHexString) {
+          const pPart = prefixHex ? `<${prefixHex}> ` : '';
+          const rPart = `<${replacementHex}>`;
+          const sPart = suffixHex ? ` <${suffixHex}>` : '';
+          patchedOperatorText = `[ ${pPart}${rPart} ${kernAdjustment}${sPart} ] TJ`;
+        } else {
+          const pPart = prefixGlyphs.length > 0 ? `(${this.glyphsToLiteral(prefixGlyphs)}) ` : '';
+          const rPart = `(${replacementLiteral})`;
+          const sPart = suffixGlyphs.length > 0 ? ` (${this.glyphsToLiteral(suffixGlyphs)})` : '';
+          patchedOperatorText = `[ ${pPart}${rPart} ${kernAdjustment}${sPart} ] TJ`;
+        }
       } else {
-        const fullLiteral = this.glyphsToLiteral(prefixGlyphs) + replacementLiteral + this.glyphsToLiteral(suffixGlyphs);
-        patchedOperatorText = `(${fullLiteral}) ${opName}`;
+        const opName = run.operator;
+        if (run.isHexString) {
+          const fullHex = prefixHex + replacementHex + suffixHex;
+          patchedOperatorText = `<${fullHex}> ${opName}`;
+        } else {
+          const fullLiteral = this.glyphsToLiteral(prefixGlyphs) + replacementLiteral + this.glyphsToLiteral(suffixGlyphs);
+          patchedOperatorText = `(${fullLiteral}) ${opName}`;
+        }
       }
     } else if (run.operator === 'TJ') {
-      // In-place replacement inside TJ array element
-      if (run.isHexString) {
-        patchedOperatorText = `<${prefixHex}${replacementHex}${suffixHex}>`;
+      if (shouldCompensate) {
+        // In-place replacement inside TJ array element with kerning compensation
+        if (run.isHexString) {
+          const pPart = prefixHex ? `<${prefixHex}> ` : '';
+          const rPart = `<${replacementHex}>`;
+          const sPart = suffixHex ? ` <${suffixHex}>` : '';
+          patchedOperatorText = `${pPart}${rPart} ${kernAdjustment}${sPart}`.trim();
+        } else {
+          const pPart = prefixGlyphs.length > 0 ? `(${this.glyphsToLiteral(prefixGlyphs)}) ` : '';
+          const rPart = `(${replacementLiteral})`;
+          const sPart = suffixGlyphs.length > 0 ? ` (${this.glyphsToLiteral(suffixGlyphs)})` : '';
+          patchedOperatorText = `${pPart}${rPart} ${kernAdjustment}${sPart}`.trim();
+        }
       } else {
-        patchedOperatorText = `(${this.glyphsToLiteral(prefixGlyphs)}${replacementLiteral}${this.glyphsToLiteral(suffixGlyphs)})`;
+        if (run.isHexString) {
+          patchedOperatorText = `<${prefixHex}${replacementHex}${suffixHex}>`;
+        } else {
+          patchedOperatorText = `(${this.glyphsToLiteral(prefixGlyphs)}${replacementLiteral}${this.glyphsToLiteral(suffixGlyphs)})`;
+        }
       }
     }
 

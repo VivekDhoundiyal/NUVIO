@@ -29,14 +29,10 @@ import {
   Paintbrush,
   Plus,
   Baseline,
-  List,
-  ListOrdered,
   Copy,
   ClipboardPaste,
   Trash2,
   CopyPlus,
-  Superscript,
-  Subscript,
 } from 'lucide-react';
 import { IconButton } from '../../components/ui/IconButton';
 import { Button } from '../../components/ui/Button';
@@ -127,7 +123,6 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   isExporting,
   activeTextStyle,
   onUpdateTextStyle,
-  onToggleList,
   isTextSelected,
   isFormatPainterActive,
   onToggleFormatPainter,
@@ -470,12 +465,9 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
             className="h-7 px-2 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-brand-500 font-medium cursor-pointer"
             title="Font Family"
           >
-            <option value="Helvetica, Arial, sans-serif">Helvetica (Sans)</option>
+            <option value="Helvetica, Arial, sans-serif">Helvetica (Sans-Serif)</option>
             <option value="'Times New Roman', Times, serif">Times New Roman (Serif)</option>
-            <option value="'Courier New', Courier, monospace">Courier (Mono)</option>
-            <option value="Georgia, serif">Georgia</option>
-            <option value="Garamond, serif">Garamond</option>
-            <option value="Verdana, sans-serif">Verdana</option>
+            <option value="'Courier New', Courier, monospace">Courier (Monospace)</option>
           </select>
         </div>
 
@@ -561,36 +553,6 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
             }
           >
             <Strikethrough className="w-3.5 h-3.5" />
-          </IconButton>
-        </div>
-
-        {/* Superscript & Subscript */}
-        <div className="flex items-center gap-0.5 border-r border-slate-200 dark:border-slate-700/60 pr-2">
-          <IconButton
-            size="sm"
-            isActive={currentStyle.verticalAlign === 'super'}
-            aria-label="Superscript"
-            title="Superscript (X²)"
-            onClick={() =>
-              onUpdateTextStyle?.({
-                verticalAlign: currentStyle.verticalAlign === 'super' ? 'baseline' : 'super',
-              })
-            }
-          >
-            <Superscript className="w-3.5 h-3.5" />
-          </IconButton>
-          <IconButton
-            size="sm"
-            isActive={currentStyle.verticalAlign === 'sub'}
-            aria-label="Subscript"
-            title="Subscript (X₂)"
-            onClick={() =>
-              onUpdateTextStyle?.({
-                verticalAlign: currentStyle.verticalAlign === 'sub' ? 'baseline' : 'sub',
-              })
-            }
-          >
-            <Subscript className="w-3.5 h-3.5" />
           </IconButton>
         </div>
 
@@ -685,67 +647,10 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
           </IconButton>
         </div>
 
-        {/* Line Spacing */}
-        <div className="flex items-center gap-1 border-r border-slate-200 dark:border-slate-700/60 pr-2">
-          <span className="text-[11px] text-slate-500 hidden md:inline">Line:</span>
-          <select
-            value={currentStyle.lineHeight || 1.2}
-            onChange={(e) => onUpdateTextStyle?.({ lineHeight: Number(e.target.value) })}
-            className="h-7 px-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono cursor-pointer"
-            title="Line Spacing"
-          >
-            <option value={1.0}>1.0</option>
-            <option value={1.15}>1.15</option>
-            <option value={1.25}>1.25</option>
-            <option value={1.5}>1.5</option>
-            <option value={2.0}>2.0</option>
-          </select>
-        </div>
-
-        {/* Character Spacing */}
-        <div className="flex items-center gap-1 border-r border-slate-200 dark:border-slate-700/60 pr-2">
-          <span className="text-[11px] text-slate-500 hidden md:inline">Spacing:</span>
-          <select
-            value={currentStyle.letterSpacing || 0}
-            onChange={(e) => onUpdateTextStyle?.({ letterSpacing: Number(e.target.value) })}
-            className="h-7 px-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-brand-500 font-mono cursor-pointer"
-            title="Character Spacing"
-          >
-            <option value={0}>0</option>
-            <option value={0.5}>0.5</option>
-            <option value={1}>1.0</option>
-            <option value={1.5}>1.5</option>
-            <option value={2}>2.0</option>
-            <option value={3}>3.0</option>
-          </select>
-        </div>
-
-        {/* Lists (Bulleted & Numbered) */}
-        <div className="flex items-center gap-0.5 border-r border-slate-200 dark:border-slate-700/60 pr-2">
-          <IconButton
-            size="sm"
-            isActive={currentStyle.listType === 'bullet'}
-            aria-label="Bulleted list"
-            title="Bulleted List"
-            onClick={() => onToggleList?.('bullet')}
-          >
-            <List className="w-3.5 h-3.5" />
-          </IconButton>
-          <IconButton
-            size="sm"
-            isActive={currentStyle.listType === 'number'}
-            aria-label="Numbered list"
-            title="Numbered List"
-            onClick={() => onToggleList?.('number')}
-          >
-            <ListOrdered className="w-3.5 h-3.5" />
-          </IconButton>
-        </div>
-
         {/* Selection Context Indicator */}
         <div className="ml-auto flex items-center gap-2">
           {isTextSelected ? (
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-brand-50 text-brand-700 dark:bg-brand-950/70 dark:text-brand-300 border border-brand-200 dark:border-brand-800">
+            <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-brand-50 text-brand-700 dark:bg-brand-950/70 dark:text-brand-300 border border-brand-200 dark:border-brand-800">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
               Editing Text
             </span>

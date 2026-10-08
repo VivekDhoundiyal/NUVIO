@@ -132,9 +132,6 @@ export const PropertyPanel: React.FC<PropertyPanelProps> = ({
             <option value="Helvetica, Arial, sans-serif">Helvetica (Sans-Serif)</option>
             <option value="'Times New Roman', Times, serif">Times New Roman (Serif)</option>
             <option value="'Courier New', Courier, monospace">Courier (Monospace)</option>
-            <option value="Georgia, serif">Georgia (Serif)</option>
-            <option value="Garamond, serif">Garamond (Serif)</option>
-            <option value="Verdana, sans-serif">Verdana (Sans-Serif)</option>
           </select>
         </div>
 

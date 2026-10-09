@@ -468,6 +468,13 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
             <option value="Helvetica, Arial, sans-serif">Helvetica (Sans-Serif)</option>
             <option value="'Times New Roman', Times, serif">Times New Roman (Serif)</option>
             <option value="'Courier New', Courier, monospace">Courier (Monospace)</option>
+            <option value="Georgia, serif">Georgia (Serif)</option>
+            <option value="Garamond, Georgia, serif">Garamond (Serif)</option>
+            <option value="Arial, Helvetica, sans-serif">Arial (Sans-Serif)</option>
+            {currentStyle.fontFamily &&
+              !['Helvetica, Arial, sans-serif', "'Times New Roman', Times, serif", "'Courier New', Courier, monospace", 'Georgia, serif', 'Garamond, Georgia, serif', 'Arial, Helvetica, sans-serif'].includes(currentStyle.fontFamily) && (
+                <option value={currentStyle.fontFamily}>{currentStyle.fontFamily}</option>
+              )}
           </select>
         </div>
 

@@ -17,6 +17,46 @@ export interface Point {
   y: number;
 }
 
+export interface PDFTextStyle {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight?: 'normal' | 'bold' | string;
+  fontStyle?: 'normal' | 'italic';
+  color: string;
+  rgbColor?: { r: number; g: number; b: number };
+  backgroundColor?: string;
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
+  verticalAlign?: 'baseline' | 'super' | 'sub';
+  letterSpacing?: number;
+  lineHeight?: number;
+  underline?: boolean;
+  strikethrough?: boolean;
+  pdfFontName?: string;
+  fontResourceName?: string;
+}
+
+export interface PDFTextGeometry {
+  x: number; // Points from left of page
+  y: number; // Points from top of page
+  pdfX: number; // PDF user coordinate (origin bottom-left)
+  pdfY: number; // PDF user coordinate baseline (origin bottom-left)
+  width: number;
+  height: number;
+  baseline: number;
+  rotation?: number;
+  textMatrix?: number[];
+}
+
+export interface PDFTextTransform {
+  textMatrix?: number[];
+  transformMatrix?: number[];
+  horizontalScale?: number;
+  characterSpacing?: number;
+  wordSpacing?: number;
+}
+
+export type PDFTextSource = 'pdf-existing' | 'user-created';
+
 export interface TextWordItem {
   id: string;
   spanId: string;
@@ -38,6 +78,12 @@ export interface TextWordItem {
   color: string;
   rgbColor: { r: number; g: number; b: number };
   isModified: boolean;
+  dirty?: boolean;
+  source?: PDFTextSource;
+  originalStyle?: PDFTextStyle;
+  currentStyle?: PDFTextStyle;
+  originalGeometry?: PDFTextGeometry;
+  currentGeometry?: PDFTextGeometry;
   charBounds?: { char: string; x: number; width: number }[];
   /** Content-stream direct operator address */
   streamIndex?: number;
@@ -97,8 +143,18 @@ export interface PDFTextElement {
   sourceTextItemReference?: string;
 
   isModified: boolean;
+  dirty?: boolean;
   isDeleted?: boolean;
   isFromOcr?: boolean;
+  source?: PDFTextSource;
+
+  originalStyle?: PDFTextStyle;
+  currentStyle?: PDFTextStyle;
+  originalGeometry?: PDFTextGeometry;
+  currentGeometry?: PDFTextGeometry;
+  originalTransform?: PDFTextTransform;
+  currentTransform?: PDFTextTransform;
+
   glyphs?: any[];
   words?: TextWordItem[];
 

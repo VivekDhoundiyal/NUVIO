@@ -5,6 +5,7 @@ import type { AnnotationObject, PageInfo, EditableTextSpan, TextWordItem, Point 
 import type { EditorToolMode } from './EditorToolbar';
 import { PdfEngine } from '../../engines/pdf/pdfEngine';
 import { TextObjectModel } from '../../engines/pdf/textObjectModel';
+import { PDFTextMetrics } from '../../engines/pdf/pdfTextMetrics';
 import { PdfCoordinateSystem } from '../../engines/pdf/pdfCoordinateSystem';
 import { TransformableObject } from './TransformableObject';
 import { Button } from '../../components/ui/Button';
@@ -37,26 +38,23 @@ export interface EditorCanvasProps {
   onRunOcrOnPage: (pageIndex: number) => void;
 }
 
-let measurementCanvas: HTMLCanvasElement | null = null;
-let measurementCtx: CanvasRenderingContext2D | null = null;
-
 export function measureTextWidth(text: string, fontSpec: string): number {
-  if (typeof document === 'undefined') {
-    return text.length * 8;
+  if (!text) return 0;
+  // Parse fontSize and fontFamily from fontSpec if available
+  const match = fontSpec.match(/(?:italic\s+)?(?:bold\s+)?(\d+(?:\.\d+)?)px\s+(.*)/i);
+  if (match) {
+    const fontSize = parseFloat(match[1]);
+    const fontFamily = match[2];
+    const isBold = fontSpec.includes('bold');
+    const isItalic = fontSpec.includes('italic');
+    return PDFTextMetrics.measureText(text, {
+      fontSize,
+      fontFamily,
+      fontWeight: isBold ? 'bold' : 'normal',
+      fontStyle: isItalic ? 'italic' : 'normal',
+    }).advanceWidthPx;
   }
-  if (!measurementCanvas) {
-    measurementCanvas = document.createElement('canvas');
-    measurementCtx = measurementCanvas.getContext('2d');
-  }
-  if (!measurementCtx) {
-    return text.length * 8;
-  }
-  try {
-    measurementCtx.font = fontSpec;
-    return measurementCtx.measureText(text).width;
-  } catch {
-    return text.length * 8;
-  }
+  return PDFTextMetrics.measureText(text).advanceWidthPx;
 }
 
 // Pure PDF.js vector canvas renderer - authoritative visual source of truth
@@ -719,23 +717,27 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                   if (isEditingSpan) {
                     const lines = (editingTextValue || '').split('\n');
                     const isMultiLine = lines.length > 1;
-
-                    const fontSpec = `${span.fontStyle === 'italic' ? 'italic ' : ''}${span.fontWeight === 'bold' ? 'bold ' : ''}${Math.round((span.fontSize || 12) * zoom)}px ${span.fontFamily || 'Helvetica, Arial, sans-serif'}`;
-
                     if (!isMultiLine) {
-                      const measuredWidth = measureTextWidth(editingTextValue || '', fontSpec);
-                      const dynamicInputWidth = Math.max(spanWidth + 16, Math.ceil(measuredWidth + 28));
+                      const inputBounds = PDFTextMetrics.computeInputBounds(
+                        editingTextValue || '',
+                        span.currentStyle || span,
+                        zoom,
+                        28
+                      );
+                      const dynamicInputWidth = Math.max(spanWidth + 24, inputBounds.widthPx);
+                      const dynamicInputHeight = Math.max(spanHeight + 6, inputBounds.heightPx);
                       return (
                         <div
                           key={span.id}
-                          className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1.5"
+                          className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center"
                           style={{
-                            left: spanLeft - 1,
-                            top: spanTop - 1,
-                            minWidth: Math.max(spanWidth + 12, 32),
+                            left: spanLeft - 2,
+                            top: spanTop - 2,
+                            minWidth: Math.max(spanWidth + 16, 36),
                             width: `${dynamicInputWidth}px`,
-                            height: Math.max(spanHeight + 4, 20),
+                            height: `${dynamicInputHeight}px`,
                             boxSizing: 'border-box',
+                            overflow: 'visible',
                           }}
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -755,7 +757,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                             }}
                             onBlur={() => commitSpanEdit(span, page.height)}
                             style={{
-                              fontSize: `${(span.verticalAlign === 'super' || span.verticalAlign === 'sub' ? Math.max(6, Math.round(span.fontSize * 0.7)) : Math.round(span.fontSize || 12)) * zoom}px`,
+                              fontSize: `${(span.verticalAlign === 'super' || span.verticalAlign === 'sub' ? Math.max(6, Math.round(span.fontSize * 0.7)) : span.fontSize || 12) * zoom}px`,
                               color: span.color,
                               fontFamily: span.fontFamily || 'Helvetica, Arial, sans-serif',
                               fontWeight: span.fontWeight,
@@ -763,8 +765,14 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                               textAlign: span.textAlign || 'left',
                               letterSpacing: span.letterSpacing ? `${span.letterSpacing * zoom}px` : undefined,
                               boxSizing: 'border-box',
+                              paddingLeft: '4px',
+                              paddingRight: '16px',
+                              width: '100%',
+                              height: '100%',
                             }}
-                            className="w-full h-full bg-transparent outline-none border-none p-0 leading-none"
+                            className="bg-transparent outline-none border-none p-0 leading-none"
+                            autoComplete="off"
+                            spellCheck={false}
                           />
                         </div>
                       );
@@ -773,8 +781,8 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                     const lineCount = lines.length;
                     const effectiveLineHeight = (span.lineHeight || 1.25) * (span.fontSize || 12) * zoom;
                     const editorHeight = Math.max(spanHeight, lineCount * effectiveLineHeight);
-                    const maxLineWidth = Math.max(...lines.map((l) => measureTextWidth(l, fontSpec)));
-                    const dynamicAreaWidth = Math.max(spanWidth + 24, Math.ceil(maxLineWidth + 32));
+                    const maxLineWidth = Math.max(...lines.map((l) => PDFTextMetrics.measureText(l, span.currentStyle || span, zoom).visualWidthPx));
+                    const dynamicAreaWidth = Math.max(spanWidth + 28, Math.ceil(maxLineWidth + 36));
 
                     return (
                       <div
@@ -857,20 +865,26 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                       }
 
                       if (isEditingWord) {
-                        const fontSpec = `${word.fontStyle === 'italic' ? 'italic ' : ''}${word.fontWeight === 'bold' ? 'bold ' : ''}${Math.round((word.fontSize || 12) * zoom)}px ${word.fontFamily || 'Helvetica, Arial, sans-serif'}`;
-                        const measuredWidth = measureTextWidth(editingWordValue || '', fontSpec);
-                        const dynamicInputWidth = Math.max(wordWidth + 16, Math.ceil(measuredWidth + 28));
+                        const inputBounds = PDFTextMetrics.computeInputBounds(
+                          editingWordValue || '',
+                          word.currentStyle || word,
+                          zoom,
+                          28
+                        );
+                        const dynamicInputWidth = Math.max(wordWidth + 24, inputBounds.widthPx);
+                        const dynamicInputHeight = Math.max(wordHeight + 6, inputBounds.heightPx);
                         return (
                           <div
                             key={word.id}
-                            className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center px-1.5"
+                            className="absolute pointer-events-auto z-40 bg-white ring-2 ring-brand-500 shadow-md rounded-xs flex items-center"
                             style={{
-                              left: wordLeft - 1,
-                              top: wordTop - 1,
-                              minWidth: Math.max(wordWidth + 12, 32),
+                              left: wordLeft - 2,
+                              top: wordTop - 2,
+                              minWidth: Math.max(wordWidth + 16, 36),
                               width: `${dynamicInputWidth}px`,
-                              height: Math.max(wordHeight + 4, 20),
+                              height: `${dynamicInputHeight}px`,
                               boxSizing: 'border-box',
+                              overflow: 'visible',
                             }}
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -890,14 +904,20 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
                               }}
                               onBlur={() => commitWordEdit(span, word)}
                               style={{
-                                fontSize: `${Math.round((word.fontSize || 12) * zoom)}px`,
+                                fontSize: `${(word.fontSize || 12) * zoom}px`,
                                 color: word.color || '#000000',
                                 fontFamily: word.fontFamily || 'Helvetica, Arial, sans-serif',
                                 fontWeight: word.fontWeight || 'normal',
                                 fontStyle: word.fontStyle || 'normal',
                                 boxSizing: 'border-box',
+                                paddingLeft: '4px',
+                                paddingRight: '16px',
+                                width: '100%',
+                                height: '100%',
                               }}
-                              className="w-full h-full bg-transparent outline-none border-none p-0 leading-none"
+                              className="bg-transparent outline-none border-none p-0 leading-none"
+                              autoComplete="off"
+                              spellCheck={false}
                             />
                           </div>
                         );

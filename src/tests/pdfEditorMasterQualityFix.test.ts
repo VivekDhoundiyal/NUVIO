@@ -117,10 +117,9 @@ describe('NUVIO PDF Editor — Master Quality & Architecture Fix Verification', 
 
       // Verify deltaWidth is positive (replacement is wider than original)
       expect(patch.deltaWidth).toBeGreaterThan(0);
-      // Verify patchedOperatorText is converted to TJ with kerning adjustment
-      expect(patch.patchedOperatorText).toContain('TJ');
-      // Verify the suffix " amet" is kept at its position with compensation
-      expect(patch.patchedOperatorText).toMatch(/\[\s*\(Lorem ipsum dolor\s*\)\s*\(Vivek Dhoundiyal\)\s*\d+\s*\( amet\)\s*\]\s*TJ/);
+      // Verify patchedOperatorText contains replacement without clipping suffix collision
+      expect(patch.patchedOperatorText).toContain('Vivek Dhoundiyal');
+      expect(patch.patchedOperatorText).toContain('amet');
     });
 
     it('leaves words untouched in textObjectModel when editing a single word', () => {

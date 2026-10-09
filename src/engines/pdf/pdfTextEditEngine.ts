@@ -68,16 +68,22 @@ export class PdfTextEditEngine {
     const prefixHex = this.glyphsToHex(prefixGlyphs, isCID);
     const suffixHex = this.glyphsToHex(suffixGlyphs, isCID);
 
-    let patchedOperatorText = '';
+    // In PDF TJ operator (ISO 32000-1 §9.4.3):
+    // A POSITIVE number in TJ subtracts from the coordinate (moves the next glyph LEFT, overlapping).
+    // A NEGATIVE number in TJ adds to the coordinate (moves the next glyph RIGHT, adding space).
+    // To prevent clipping when replacement text is wider (deltaWidth > 0), we must NEVER
+    // shift the suffix leftwards over the replacement glyphs (which would obliterate trailing letters like 'k').
+    // When replacement is shorter (deltaWidth < 0), a negative kerning offset can preserve the original suffix anchor.
     const hasSuffix = suffixGlyphs.length > 0;
-    const shouldCompensate = hasSuffix && Math.abs(deltaWidth) > 0.05;
-    const kernAdjustment = shouldCompensate
+    const shouldCompensateShorter = hasSuffix && deltaWidth < -0.05;
+    const kernAdjustment = shouldCompensateShorter
       ? Math.round((deltaWidth / (run.fontSize * hScale)) * 1000)
       : 0;
 
+    let patchedOperatorText = '';
+
     if (run.operator === 'Tj' || run.operator === "'" || run.operator === '"') {
-      if (shouldCompensate) {
-        // Convert to TJ with kerning compensation so suffix text never reflows or shifts
+      if (kernAdjustment !== 0) {
         if (run.isHexString) {
           const pPart = prefixHex ? `<${prefixHex}> ` : '';
           const rPart = `<${replacementHex}>`;
@@ -100,8 +106,7 @@ export class PdfTextEditEngine {
         }
       }
     } else if (run.operator === 'TJ') {
-      if (shouldCompensate) {
-        // In-place replacement inside TJ array element with kerning compensation
+      if (kernAdjustment !== 0) {
         if (run.isHexString) {
           const pPart = prefixHex ? `<${prefixHex}> ` : '';
           const rPart = `<${replacementHex}>`;

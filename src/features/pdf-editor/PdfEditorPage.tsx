@@ -1004,6 +1004,22 @@ export const PdfEditorPage: React.FC = () => {
     }
   };
 
+  // Editor text insertion style for Mode B (new text)
+  const [editorInsertionStyle, setEditorInsertionStyle] = useState<TextStyleProps>({
+    fontFamily: 'Helvetica, Arial, sans-serif',
+    fontSize: 14,
+    fontWeight: 'normal',
+    fontStyle: 'normal',
+    underline: false,
+    strikethrough: false,
+    color: '#0f172a',
+    backgroundColor: '',
+    textAlign: 'left',
+    verticalAlign: 'baseline',
+    letterSpacing: 0,
+    lineHeight: 1.2,
+  });
+
   // Insert Text Box
   const handleInsertTextBox = () => {
     const currentPage = pages[activePageIndex] || pages[0];
@@ -1016,10 +1032,12 @@ export const PdfEditorPage: React.FC = () => {
       width: 180,
       height: 50,
       text: 'Type text here',
-      fontSize: 14,
-      fontFamily: 'Helvetica, Arial, sans-serif',
-      textColor: '#0f172a',
-      textAlign: 'left',
+      fontSize: editorInsertionStyle.fontSize || 14,
+      fontFamily: editorInsertionStyle.fontFamily || 'Helvetica, Arial, sans-serif',
+      fontWeight: (editorInsertionStyle.fontWeight as any) || 'normal',
+      fontStyle: (editorInsertionStyle.fontStyle as any) || 'normal',
+      textColor: editorInsertionStyle.color || '#0f172a',
+      textAlign: editorInsertionStyle.textAlign || 'left',
       createdAt: Date.now(),
     };
     handleAddAnnotation(newTextBox);
@@ -1038,21 +1056,24 @@ export const PdfEditorPage: React.FC = () => {
     : null;
 
   // Active text style resolution for the Google Docs Rich Text Formatting Bar
+  // State 1: EXISTING PDF TEXT -> reflects selectedSpan's formatting (Mode A)
+  // State 2: NEW TEXT OBJECT -> reflects selectedObject's formatting (Mode B)
+  // State 3: NONE -> reflects editorInsertionStyle defaults
   const activeTextStyle: TextStyleProps = useMemo(() => {
     if (selectedSpan) {
       return {
-        fontFamily: selectedSpan.fontFamily || 'Helvetica, Arial, sans-serif',
-        fontSize: selectedSpan.fontSize || 12,
-        fontWeight: selectedSpan.fontWeight || 'normal',
-        fontStyle: selectedSpan.fontStyle || 'normal',
-        underline: !!selectedSpan.underline,
-        strikethrough: !!selectedSpan.strikethrough,
-        color: selectedSpan.color || '#0f172a',
-        backgroundColor: selectedSpan.backgroundColor || '',
-        textAlign: (selectedSpan.textAlign as any) || 'left',
-        verticalAlign: selectedSpan.verticalAlign || 'baseline',
-        letterSpacing: selectedSpan.letterSpacing || 0,
-        lineHeight: selectedSpan.lineHeight || 1.2,
+        fontFamily: selectedSpan.currentStyle?.fontFamily || selectedSpan.fontFamily || 'Helvetica, Arial, sans-serif',
+        fontSize: selectedSpan.currentStyle?.fontSize || selectedSpan.fontSize || 12,
+        fontWeight: selectedSpan.currentStyle?.fontWeight || selectedSpan.fontWeight || 'normal',
+        fontStyle: selectedSpan.currentStyle?.fontStyle || selectedSpan.fontStyle || 'normal',
+        underline: selectedSpan.currentStyle?.underline !== undefined ? selectedSpan.currentStyle.underline : !!selectedSpan.underline,
+        strikethrough: selectedSpan.currentStyle?.strikethrough !== undefined ? selectedSpan.currentStyle.strikethrough : !!selectedSpan.strikethrough,
+        color: selectedSpan.currentStyle?.color || selectedSpan.color || '#0f172a',
+        backgroundColor: selectedSpan.currentStyle?.backgroundColor ?? (selectedSpan.backgroundColor || ''),
+        textAlign: (selectedSpan.currentStyle?.textAlign || selectedSpan.textAlign || 'left') as any,
+        verticalAlign: selectedSpan.currentStyle?.verticalAlign || selectedSpan.verticalAlign || 'baseline',
+        letterSpacing: selectedSpan.currentStyle?.letterSpacing ?? (selectedSpan.letterSpacing || 0),
+        lineHeight: selectedSpan.currentStyle?.lineHeight ?? (selectedSpan.lineHeight || 1.2),
       };
     }
     if (selectedObject && selectedObject.type === 'text') {
@@ -1071,21 +1092,8 @@ export const PdfEditorPage: React.FC = () => {
         lineHeight: selectedObject.lineHeight || 1.2,
       };
     }
-    return {
-      fontFamily: 'Helvetica, Arial, sans-serif',
-      fontSize: 12,
-      fontWeight: 'normal',
-      fontStyle: 'normal',
-      underline: false,
-      strikethrough: false,
-      color: '#0f172a',
-      backgroundColor: '',
-      textAlign: 'left',
-      verticalAlign: 'baseline',
-      letterSpacing: 0,
-      lineHeight: 1.2,
-    };
-  }, [selectedSpan, selectedObject]);
+    return editorInsertionStyle;
+  }, [selectedSpan, selectedObject, editorInsertionStyle]);
 
   const handleUpdateActiveTextStyle = (updates: Partial<TextStyleProps>) => {
     if (selectedSpan) {
@@ -1103,23 +1111,32 @@ export const PdfEditorPage: React.FC = () => {
         }
       }
 
-      const updated: EditableTextSpan = {
-        ...selectedSpan,
-        fontFamily: updates.fontFamily ?? selectedSpan.fontFamily,
-        fontSize: updates.fontSize ?? selectedSpan.fontSize,
-        fontWeight: (updates.fontWeight as any) ?? selectedSpan.fontWeight,
-        fontStyle: (updates.fontStyle as any) ?? selectedSpan.fontStyle,
-        underline: updates.underline !== undefined ? updates.underline : selectedSpan.underline,
-        strikethrough: updates.strikethrough !== undefined ? updates.strikethrough : selectedSpan.strikethrough,
-        color: updates.color ?? selectedSpan.color,
-        rgbColor: nextRgbColor,
+      const nextStyle = {
+        ...(selectedSpan.currentStyle || {}),
+        fontFamily: updates.fontFamily ?? selectedSpan.fontFamily ?? 'Helvetica, Arial, sans-serif',
+        fontSize: updates.fontSize ?? selectedSpan.fontSize ?? 12,
+        fontWeight: (updates.fontWeight as any) ?? selectedSpan.fontWeight ?? 'normal',
+        fontStyle: (updates.fontStyle as any) ?? selectedSpan.fontStyle ?? 'normal',
+        underline: updates.underline !== undefined ? updates.underline : !!selectedSpan.underline,
+        strikethrough: updates.strikethrough !== undefined ? updates.strikethrough : !!selectedSpan.strikethrough,
+        color: updates.color ?? selectedSpan.color ?? '#0f172a',
         backgroundColor: updates.backgroundColor !== undefined ? updates.backgroundColor : selectedSpan.backgroundColor,
-        textAlign: updates.textAlign ?? selectedSpan.textAlign,
-        verticalAlign: updates.verticalAlign ?? selectedSpan.verticalAlign,
-        letterSpacing: updates.letterSpacing !== undefined ? updates.letterSpacing : selectedSpan.letterSpacing,
+        textAlign: updates.textAlign ?? selectedSpan.textAlign ?? 'left',
+        verticalAlign: updates.verticalAlign ?? selectedSpan.verticalAlign ?? 'baseline',
+        letterSpacing: updates.letterSpacing !== undefined ? updates.letterSpacing : (selectedSpan.letterSpacing || 0),
         lineHeight: updates.lineHeight ?? selectedSpan.lineHeight,
-        isModified: true,
       };
+
+      let updated: EditableTextSpan = {
+        ...selectedSpan,
+        ...nextStyle,
+        rgbColor: nextRgbColor,
+        currentStyle: nextStyle,
+        isModified: true,
+        dirty: true,
+      };
+
+      updated = TextObjectModel.syncSpanStyles(updated);
       handleUpdateTextSpan(updated);
     } else if (selectedObject && selectedObject.type === 'text') {
       handleUpdateAnnotation(selectedObject.id, {
@@ -1135,6 +1152,11 @@ export const PdfEditorPage: React.FC = () => {
         verticalAlign: updates.verticalAlign ?? selectedObject.verticalAlign,
         letterSpacing: updates.letterSpacing !== undefined ? updates.letterSpacing : selectedObject.letterSpacing,
       });
+    } else {
+      setEditorInsertionStyle((prev) => ({
+        ...prev,
+        ...updates,
+      }));
     }
   };
 
@@ -1186,21 +1208,9 @@ export const PdfEditorPage: React.FC = () => {
 
   const handleResetSpan = () => {
     if (!selectedSpan) return;
-    const reverted: EditableTextSpan = {
-      ...selectedSpan,
-      currentText: selectedSpan.originalText,
-      fontSize: selectedSpan.fontSize,
-      fontFamily: 'Helvetica, sans-serif',
-      color: '#0f172a',
-      backgroundColor: undefined,
-      fontWeight: 'normal',
-      fontStyle: 'normal',
-      underline: false,
-      strikethrough: false,
-      isModified: false,
-    };
+    const reverted = TextObjectModel.revertSpan(selectedSpan);
     handleUpdateTextSpan(reverted);
-    toast.info('Text Reset', 'Reverted span to original PDF text.');
+    toast.info('Text Reset', 'Reverted span to original PDF text and formatting.');
   };
 
   return (

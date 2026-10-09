@@ -101,6 +101,63 @@ export class AnnotationBurner {
           if (!span.isModified && !span.isDeleted) continue;
           if (patchedSpanIds.has(span.id)) continue;
 
+          // Check for precision word-level modifications
+          const modifiedWords = span.words?.filter((w) => w.isModified);
+          const isWordLevel = !span.isDeleted && Boolean(modifiedWords && modifiedWords.length > 0);
+
+          if (isWordLevel && modifiedWords) {
+            let maskColor = rgb(1, 1, 1);
+            if (span.backgroundColor && span.backgroundColor !== 'transparent') {
+              const bgObj = parseHexColor(span.backgroundColor);
+              maskColor = rgb(bgObj.r, bgObj.g, bgObj.b);
+            }
+
+            for (const word of modifiedWords) {
+              const wordPdfX = word.originalGeometry?.pdfX ?? word.pdfX ?? word.x;
+              const wordPdfBaseline = word.baseline !== undefined
+                ? word.baseline
+                : word.originalGeometry?.pdfY !== undefined
+                ? word.originalGeometry.pdfY
+                : word.pdfY !== undefined
+                ? word.pdfY
+                : (pageHeight - word.y - word.fontSize);
+
+              const wordSize = word.fontSize || span.fontSize || 12;
+              const wordOrigWidth = word.originalGeometry?.width ?? word.width;
+
+              const maskBottom = Math.max(0, wordPdfBaseline - wordSize * 0.3 - 0.5);
+              const maskTop = wordPdfBaseline + wordSize * 0.95 + 0.5;
+              const maskHeight = maskTop - maskBottom;
+
+              // Localized mask: cover ONLY the exact original word bounds!
+              // Surrounding words (WORD A, WORD C) are 100% UNTOUCHED!
+              page.drawRectangle({
+                x: Math.max(0, wordPdfX - 0.5),
+                y: maskBottom,
+                width: wordOrigWidth + 1,
+                height: maskHeight,
+                color: maskColor,
+                opacity: 1.0,
+              });
+
+              if (!word.text || word.text.trim() === '') continue;
+
+              const font = resolveFont(word.fontFamily || span.fontFamily, word.fontWeight || span.fontWeight, word.fontStyle || span.fontStyle);
+              const colorObj = parseHexColor(word.color || span.color, { r: 0.06, g: 0.09, b: 0.16 });
+              const color = rgb(colorObj.r, colorObj.g, colorObj.b);
+
+              const sanitizedWordText = sanitizeWinAnsiText(word.text);
+              page.drawText(sanitizedWordText, {
+                x: Math.max(0, wordPdfX),
+                y: Math.max(0, wordPdfBaseline),
+                size: wordSize,
+                font,
+                color,
+              });
+            }
+            continue;
+          }
+
           const pdfX = span.pdfX !== undefined ? span.pdfX : span.x;
           // In PDF coordinates, transY is the font baseline
           const pdfBaseline = span.baseline !== undefined
@@ -110,8 +167,8 @@ export class AnnotationBurner {
             : (pageHeight - span.y - span.fontSize);
 
           const size = span.fontSize || 12;
-          const boxWidth = Math.max(span.width, 10);
-          const boxHeight = Math.max(span.height, size * 1.15);
+          const boxWidth = Math.max(span.originalGeometry?.width ?? span.width, 10);
+          const boxHeight = Math.max(span.originalGeometry?.height ?? span.height, size * 1.15);
 
           const rawLines = (span.currentText || '').split('\n');
           const lineCount = Math.max(1, rawLines.length);

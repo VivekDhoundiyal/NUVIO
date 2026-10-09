@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
-import type { PageInfo, DocumentMetadata, EditableTextSpan } from '../../types/document';
+import type { PageInfo, DocumentMetadata, EditableTextSpan, PDFTextStyle, PDFTextGeometry, PDFTextTransform } from '../../types/document';
 import { TextObjectModel } from './textObjectModel';
 
 // Ensure worker is registered
@@ -317,6 +317,42 @@ export class PdfEngine {
         detectedFamily = 'Arial, Helvetica, sans-serif';
       }
 
+      const styleObj: PDFTextStyle = {
+        fontFamily: detectedFamily,
+        fontSize: Math.round(fontSize * 100) / 100,
+        fontWeight: isBold ? 'bold' : 'normal',
+        fontStyle: isItalic ? 'italic' : 'normal',
+        color: hexColor,
+        rgbColor,
+        backgroundColor: undefined,
+        textAlign: 'left',
+        verticalAlign: 'baseline',
+        letterSpacing: (item as any).charSpacing || 0,
+        lineHeight: Math.max(fontSize, height),
+        pdfFontName,
+        fontResourceName: opSnapshot.fontResource || pdfFontName,
+      };
+
+      const geomObj: PDFTextGeometry = {
+        x: Math.max(0, x),
+        y: Math.max(0, y),
+        pdfX: transX,
+        pdfY: transY,
+        width: Math.max(20, width),
+        height: Math.max(fontSize, height),
+        baseline: transY,
+        rotation: 0,
+        textMatrix: transform,
+      };
+
+      const transObj: PDFTextTransform = {
+        textMatrix: transform,
+        transformMatrix: transform,
+        horizontalScale: 100,
+        characterSpacing: (item as any).charSpacing || 0,
+        wordSpacing: (item as any).wordSpacing || 0,
+      };
+
       const spanObj: EditableTextSpan = {
         id: `span-${pageNumber}-${idx}-${Date.now()}`,
         pageIndex: pageNumber - 1,
@@ -337,7 +373,7 @@ export class PdfEngine {
         pdfY: transY,
         width: Math.max(20, width),
         height: Math.max(fontSize, height),
-        fontSize: Math.round(fontSize),
+        fontSize: Math.round(fontSize * 100) / 100,
         originalFontSize: fontSize,
         fontFamily: detectedFamily,
         originalFontFamily: detectedFamily,
@@ -358,6 +394,14 @@ export class PdfEngine {
         horizontalScale: 100,
         lineHeight: Math.max(fontSize, height),
         renderingMode: 0,
+        source: 'pdf-existing',
+        dirty: false,
+        originalStyle: { ...styleObj },
+        currentStyle: { ...styleObj },
+        originalGeometry: { ...geomObj },
+        currentGeometry: { ...geomObj },
+        originalTransform: { ...transObj },
+        currentTransform: { ...transObj },
         originalBoundingBox: {
           x: transX,
           y: transY,
